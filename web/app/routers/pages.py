@@ -30,22 +30,30 @@ LEADERBOARDS: list[tuple[str, str, str]] = [
 ]
 
 
-def _latest_run_ids_subq(db: Session):
-    """Returns a subquery yielding the latest run id per machine.
-    Used to enforce 'one entry per machine' on the leaderboard."""
-    return (
+def _leaderboard(db: Session, test_name: str, direction: str, limit: int = 10) -> list[dict]:
+    """Top N drives by primary_value for a given test, with at most ONE row
+    per drive — the latest one. Drives are unique per machine, so the same
+    machine can appear multiple times if it owns multiple drives that all
+    score in the top N. Re-running the same test on the same drive replaces
+    that drive's entry rather than adding a new one."""
+    # ROW_NUMBER over (drive_id) by run timestamp picks the freshest test
+    # result for each drive. We then sort all those latest rows by metric.
+    latest = (
         select(
-            Run.id,
-            func.row_number().over(partition_by=Run.machine_id, order_by=desc(Run.ts)).label("rn"),
+            TestResult.id.label("tr_id"),
+            func.row_number()
+                .over(partition_by=TestResult.drive_id, order_by=desc(Run.ts))
+                .label("rn"),
         )
+        .join(Run, TestResult.run_id == Run.id)
+        .where(TestResult.test_name == test_name)
         .subquery()
     )
 
-
-def _leaderboard(db: Session, test_name: str, direction: str, limit: int = 10) -> list[dict]:
-    latest = _latest_run_ids_subq(db)
-    order_col = TestResult.primary_value if direction == "desc" else TestResult.primary_value
-    order_clause = order_col.desc() if direction == "desc" else order_col.asc()
+    order_clause = (
+        TestResult.primary_value.desc() if direction == "desc"
+        else TestResult.primary_value.asc()
+    )
 
     stmt = (
         select(
@@ -64,15 +72,14 @@ def _leaderboard(db: Session, test_name: str, direction: str, limit: int = 10) -
         .join(Run, TestResult.run_id == Run.id)
         .join(Machine, Run.machine_id == Machine.id)
         .join(Drive, TestResult.drive_id == Drive.id)
-        .join(latest, (latest.c.id == Run.id) & (latest.c.rn == 1))
-        .where(TestResult.test_name == test_name)
+        .join(latest, (latest.c.tr_id == TestResult.id) & (latest.c.rn == 1))
         .order_by(order_clause)
         .limit(limit)
     )
     rows = []
+    from app.slugs import drive_slug
     for row in db.execute(stmt):
         m = dict(row._mapping)
-        from app.slugs import drive_slug
         m["drive_slug"] = drive_slug(m["drive_id"])
         rows.append(m)
     return rows
