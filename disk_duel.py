@@ -1529,7 +1529,7 @@ def generate_html_report_solo(
 # Upload to public leaderboard
 # ---------------------------------------------------------------------------
 SCRIPT_VERSION = "0.2.0"
-DEFAULT_UPLOAD_URL = "https://apps.cleartextlabs.com/diskduel/api/v1/runs/"
+DEFAULT_UPLOAD_URL = "https://apps.cleartextlabs.com/disk-duel/api/v1/runs/"
 
 
 def _drive_for_path(path: str, drives: list | None = None) -> dict | None:

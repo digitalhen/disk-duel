@@ -62,7 +62,7 @@ export DISK_DUEL_UPLOAD_URL=http://localhost:8000/api/v1/runs/   # for local dev
 python3 ../disk_duel.py --upload
 ```
 
-In production the script defaults to `https://apps.cleartextlabs.com/diskduel/api/v1/runs/`, so users only need to set the API key.
+In production the script defaults to `https://apps.cleartextlabs.com/disk-duel/api/v1/runs/`, so users only need to set the API key.
 
 ## Deployment
 
@@ -70,7 +70,7 @@ Built for Dokploy on studiomac (matches existing infra patterns):
 
 1. New service from this repo, build context = `web/`.
 2. Set the env vars from `.env.example` in Dokploy's UI (do **not** commit a real `.env`).
-3. Reverse-proxy `apps.cleartextlabs.com/diskduel/*` to the container's port 8000. The app is `root_path` aware, so set `ROOT_PATH=/diskduel`.
+3. Reverse-proxy `apps.cleartextlabs.com/disk-duel/*` to the container's port 8000. The app is `root_path` aware, so set `ROOT_PATH=/disk-duel`.
 4. Migrations run automatically on container start (`alembic upgrade head` is in the `CMD`).
 
 ## Schema
