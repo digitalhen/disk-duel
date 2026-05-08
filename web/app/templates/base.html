@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% block title %}Disk Duel{% endblock %}</title>
-<link rel="stylesheet" href="{{ request.url_for('static', path='styles.css') }}">
+<link rel="stylesheet" href="{{ request.url_for('static', path='styles.css') }}?v={{ static_version }}">
 {% block head %}{% endblock %}
 </head>
 <body>
@@ -28,7 +28,7 @@
         Serial numbers are hashed and never displayed.
     </div>
 </footer>
-<script src="{{ request.url_for('static', path='site.js') }}" defer></script>
+<script src="{{ request.url_for('static', path='site.js') }}?v={{ static_version }}" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

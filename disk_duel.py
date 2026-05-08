@@ -31,7 +31,7 @@ import time
 import base64
 import io
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 # ---------------------------------------------------------------------------
@@ -1954,7 +1954,7 @@ def main():
 
     if solo:
         payload = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "mode": "solo",
             "host": host,
             "label": labels[0],
@@ -1968,7 +1968,7 @@ def main():
         }
     else:
         payload = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "mode": "dual",
             "host": host,
             "labels": list(labels),

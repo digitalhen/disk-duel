@@ -107,6 +107,6 @@
   ]
 }
 </script>
-<script src="{{ request.url_for('static', path='charts.js') }}"></script>
+<script src="{{ request.url_for('static', path='charts.js') }}?v={{ static_version }}"></script>
 {% endif %}
 {% endblock %}
