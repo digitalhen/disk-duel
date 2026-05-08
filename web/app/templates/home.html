@@ -31,7 +31,7 @@
                 <li>
                     <span class="lb-rank">{{ loop.index }}</span>
                     <div class="lb-content">
-                        <a href="{{ request.url_for('run_detail', slug=row.run_slug) }}">
+                        <a href="{{ request.url_for('drive_detail', slug=row.drive_slug) }}">
                             <div class="lb-drive">{{ row.media_name }}{% if row.enclosure_name %} <span class="muted">· {{ row.enclosure_name }}</span>{% endif %}</div>
                             <div class="lb-meta">{{ row.machine_model or row.machine_name or '—' }}{% if row.chip_type %} · {{ row.chip_type }}{% endif %}{% if row.internal %} · internal{% endif %}</div>
                         </a>
@@ -97,7 +97,7 @@
                 <tr>
                     <td><a href="{{ request.url_for('machine', slug=machine.slug) }}">{{ machine.machine_model or machine.machine_name or 'unknown' }}</a></td>
                     <td>{{ machine.chip_type or '—' }}</td>
-                    <td><strong>{{ drive.media_name }}</strong></td>
+                    <td><a href="{{ request.url_for('drive_detail', slug=drive.slug) }}"><strong>{{ drive.media_name }}</strong></a></td>
                     <td>{{ drive.bus_protocol or '—' }}</td>
                     <td>{{ 'internal' if drive.internal else 'external' }}</td>
                     <td>{{ '%.0f GB' | format(drive.size_gb) if drive.size_gb else '—' }}</td>

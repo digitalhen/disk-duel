@@ -154,15 +154,17 @@ def _resolve_drives(
     db: Session, machine: Machine, payload: RunIn
 ) -> dict[str, Drive]:
     """Return a {label: Drive} map. Uses payload.drives metadata when
-    present; falls back to a stub Drive keyed only by label for older
-    script versions that don't ship drive details."""
+    provided; falls back to stubbing from all_results labels only when
+    no drives field was supplied (older script versions). Test rows
+    with labels that don't match any declared drive get silently
+    dropped in _insert_test_results."""
     by_label: dict[str, DriveInfo] = {d.label: d for d in payload.drives}
 
-    # Guarantee an entry exists for every label that appears in test data.
-    labels = {tr.label for tr in payload.all_results}
-    for lbl in labels:
-        if lbl not in by_label:
-            by_label[lbl] = DriveInfo(label=lbl, media_name=lbl)
+    if not by_label:
+        # Legacy payload: build stubs from whatever labels appear in tests.
+        for tr in payload.all_results:
+            if tr.label not in by_label:
+                by_label[tr.label] = DriveInfo(label=tr.label, media_name=tr.label)
 
     resolved: dict[str, Drive] = {}
     for lbl, info in by_label.items():

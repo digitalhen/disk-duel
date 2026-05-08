@@ -2019,11 +2019,18 @@ def main():
         payload["pow_difficulty"] = POW_DIFFICULTY_BITS
         payload["pow_version"] = POW_VERSION
 
-        print(f"{C.BOLD}Uploading to {upload_url}...{C.RESET}")
+        print(f"{C.BOLD}Uploading...{C.RESET}")
         try:
             resp = upload_results(payload, url=upload_url, api_key=api_key)
-            print(f"  {C.GREEN}Run:     {resp.get('run_url')}{C.RESET}")
-            print(f"  {C.GREEN}Machine: {resp.get('machine_url')}{C.RESET}")
+            run_url = resp.get("run_url", "")
+            machine_url = resp.get("machine_url", "")
+            # Pad to box width so the URL line stands clear of normal output.
+            print()
+            print(f"  {C.GREEN}{C.BOLD}Published.{C.RESET} View your run:")
+            print()
+            print(f"    {C.CYAN}{C.BOLD}{run_url}{C.RESET}")
+            print()
+            print(f"  {C.DIM}All runs from this machine:{C.RESET} {C.DIM}{machine_url}{C.RESET}")
         except Exception as e:
             print(f"  {C.RED}Upload failed: {e}{C.RESET}")
         print()

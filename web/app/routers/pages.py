@@ -6,11 +6,12 @@ from typing import Sequence
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc, distinct, func, select
+from sqlalchemy import desc, distinct, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db import get_db
 from app.models import Drive, Machine, Run, TestResult
+from app.slugs import drive_id_from_slug
 
 
 router = APIRouter()
@@ -54,6 +55,7 @@ def _leaderboard(db: Session, test_name: str, direction: str, limit: int = 10) -
             Machine.machine_name,
             Machine.machine_model,
             Machine.chip_type,
+            Drive.id.label("drive_id"),
             Drive.media_name,
             Drive.enclosure_name,
             Drive.internal,
@@ -67,7 +69,13 @@ def _leaderboard(db: Session, test_name: str, direction: str, limit: int = 10) -
         .order_by(order_clause)
         .limit(limit)
     )
-    return [dict(row._mapping) for row in db.execute(stmt)]
+    rows = []
+    for row in db.execute(stmt):
+        m = dict(row._mapping)
+        from app.slugs import drive_slug
+        m["drive_slug"] = drive_slug(m["drive_id"])
+        rows.append(m)
+    return rows
 
 
 def _browse_data(
@@ -195,6 +203,46 @@ def run_detail(slug: str, request: Request, db: Session = Depends(get_db)) -> HT
     return templates.TemplateResponse(
         request, "run.html",
         {"run": r, "tests": ordered},
+    )
+
+
+@router.get("/drive/{slug}/", response_class=HTMLResponse)
+def drive_detail(slug: str, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    drive_id = drive_id_from_slug(slug)
+    if drive_id is None:
+        raise HTTPException(404)
+    drive = db.scalar(
+        select(Drive).where(Drive.id == drive_id).options(selectinload(Drive.machine))
+    )
+    if drive is None:
+        raise HTTPException(404)
+
+    # Latest TestResult per test for this drive — gives the "current" stats line.
+    latest_run = db.scalar(
+        select(Run.id)
+        .join(TestResult, TestResult.run_id == Run.id)
+        .where(TestResult.drive_id == drive.id)
+        .order_by(Run.ts.desc())
+        .limit(1)
+    )
+    latest_results: list[TestResult] = []
+    if latest_run is not None:
+        latest_results = list(db.scalars(
+            select(TestResult)
+            .where(TestResult.run_id == latest_run, TestResult.drive_id == drive.id)
+        ))
+
+    # All runs that involved this drive, newest first.
+    runs_rows = db.execute(
+        select(Run)
+        .where(or_(Run.drive_a_id == drive.id, Run.drive_b_id == drive.id))
+        .options(selectinload(Run.drive_a), selectinload(Run.drive_b))
+        .order_by(Run.ts.desc())
+    ).scalars().all()
+
+    return templates.TemplateResponse(
+        request, "drive.html",
+        {"drive": drive, "latest_results": latest_results, "runs": runs_rows, "latest_run_id": latest_run},
     )
 
 

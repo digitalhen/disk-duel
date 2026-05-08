@@ -14,15 +14,15 @@
     </div>
 
     <div class="run-drives">
-        <div class="drive-card">
+        <a class="drive-card" href="{{ request.url_for('drive_detail', slug=run.drive_a.slug) }}">
             <h3>{{ run.drive_a.media_name }}</h3>
             <p class="meta">{{ run.drive_a.bus_protocol or '—' }}{% if run.drive_a.enclosure_name %} · {{ run.drive_a.enclosure_name }}{% endif %}{% if run.drive_a.size_gb %} · {{ '%.0f GB' | format(run.drive_a.size_gb) }}{% endif %}{% if run.drive_a.internal %} · internal{% else %} · external{% endif %}</p>
-        </div>
+        </a>
         {% if run.drive_b %}
-        <div class="drive-card alt">
+        <a class="drive-card alt" href="{{ request.url_for('drive_detail', slug=run.drive_b.slug) }}">
             <h3>{{ run.drive_b.media_name }}</h3>
             <p class="meta">{{ run.drive_b.bus_protocol or '—' }}{% if run.drive_b.enclosure_name %} · {{ run.drive_b.enclosure_name }}{% endif %}{% if run.drive_b.size_gb %} · {{ '%.0f GB' | format(run.drive_b.size_gb) }}{% endif %}{% if run.drive_b.internal %} · internal{% else %} · external{% endif %}</p>
-        </div>
+        </a>
         {% endif %}
     </div>
 </section>

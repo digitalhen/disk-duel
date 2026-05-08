@@ -21,7 +21,7 @@
             <tbody>
             {% for d in machine.drives %}
                 <tr>
-                    <td><strong>{{ d.media_name }}</strong></td>
+                    <td><a href="{{ request.url_for('drive_detail', slug=d.slug) }}"><strong>{{ d.media_name }}</strong></a></td>
                     <td>{{ d.bus_protocol or '—' }}</td>
                     <td>{{ 'internal' if d.internal else 'external' }}</td>
                     <td>{{ '%.0f GB' | format(d.size_gb) if d.size_gb else '—' }}</td>

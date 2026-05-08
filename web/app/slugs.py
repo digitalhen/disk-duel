@@ -10,6 +10,7 @@ from app.config import settings
 
 _machine_hashids = Hashids(salt=f"{settings.hashids_salt}:machine", min_length=8)
 _run_hashids = Hashids(salt=f"{settings.hashids_salt}:run", min_length=8)
+_drive_hashids = Hashids(salt=f"{settings.hashids_salt}:drive", min_length=8)
 
 
 def machine_slug(machine_id: int) -> str:
@@ -18,6 +19,15 @@ def machine_slug(machine_id: int) -> str:
 
 def run_slug(run_id: int) -> str:
     return _run_hashids.encode(run_id)
+
+
+def drive_slug(drive_id: int) -> str:
+    return _drive_hashids.encode(drive_id)
+
+
+def drive_id_from_slug(slug: str) -> int | None:
+    decoded = _drive_hashids.decode(slug)
+    return decoded[0] if decoded else None
 
 
 def hash_serial(serial: str | None) -> str:

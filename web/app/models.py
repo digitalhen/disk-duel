@@ -49,6 +49,13 @@ class Drive(Base):
 
     machine: Mapped[Machine] = relationship(back_populates="drives")
 
+    @property
+    def slug(self) -> str:
+        # Computed (not stored): hashids decode → id is fast enough since id
+        # is the primary key, and we save a column + migration.
+        from app.slugs import drive_slug
+        return drive_slug(self.id)
+
 
 class Run(Base):
     __tablename__ = "runs"
