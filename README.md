@@ -4,6 +4,28 @@ Comprehensive `fio`-based drive benchmark with a scored HTML report. Compare two
 
 The benchmark suite covers sequential throughput, random 4K IOPS at QD1/4/16/32, large-block random, mixed read/write, sustained sequential write, and QD1 latency — 19 tests total.
 
+## Quick start (no install)
+
+Download and run straight from GitHub. The interactive menu kicks in when no positional args are given:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py
+```
+
+To compare two specific paths, append them:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py /path/to/drive_a /path/to/drive_b
+```
+
+To benchmark a single drive:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py /path/to/drive
+```
+
+> Note: piping `curl … | python3 -` directly doesn't work because the interactive menu needs stdin, so the one-liner downloads the script first. The HTML/JSON report lands in the current working directory. Make sure `fio` is installed (`brew install fio` on macOS, `sudo apt-get install fio` on Debian/Ubuntu) — the script will tell you if it's missing.
+
 ## Interactive mode (recommended on macOS)
 
 Run with no positional arguments to get a menu of detected drives:
