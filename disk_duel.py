@@ -232,17 +232,95 @@ def get_test_suite(quick: bool = False, size_mult: float = 1.0):
 # ---------------------------------------------------------------------------
 # fio runner
 # ---------------------------------------------------------------------------
+def _prompt_yes(prompt: str) -> bool:
+    """Default-yes [Y/n] prompt; returns False on a non-TTY stdin."""
+    if not sys.stdin.isatty():
+        return False
+    try:
+        ans = input(f"{prompt} [Y/n]: ").strip().lower()
+    except EOFError:
+        return False
+    return ans in ("", "y", "yes")
+
+
+def _run_install(cmd: list[str]) -> bool:
+    print(f"  {C.DIM}$ {' '.join(cmd)}{C.RESET}")
+    try:
+        subprocess.check_call(cmd)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"  {C.RED}install command failed: {e}{C.RESET}")
+        return False
+
+
 def check_fio():
-    """Check if fio is installed."""
-    if shutil.which("fio") is None:
-        print(f"{C.RED}{C.BOLD}Error: fio is not installed.{C.RESET}")
-        print(f"{C.YELLOW}Install it with:{C.RESET}")
-        print(f"  macOS:  brew install fio")
-        print(f"  Linux:  sudo apt-get install fio")
-        sys.exit(1)
-    # Print version
-    ver = subprocess.check_output(["fio", "--version"], text=True).strip()
-    print(f"  {C.DIM}fio version: {ver}{C.RESET}")
+    """Ensure fio is available. On macOS, offer to brew install it. On Linux,
+    print the apt command (since installing needs sudo we don't want to
+    invoke it without asking). Falls through to exit if the user declines."""
+    if shutil.which("fio") is not None:
+        ver = subprocess.check_output(["fio", "--version"], text=True).strip()
+        print(f"  {C.DIM}fio version: {ver}{C.RESET}")
+        return
+
+    print(f"  {C.YELLOW}fio is not installed.{C.RESET}")
+
+    if sys.platform == "darwin" and shutil.which("brew") is not None:
+        if _prompt_yes("Install fio via brew?"):
+            if _run_install(["brew", "install", "fio"]) and shutil.which("fio") is not None:
+                ver = subprocess.check_output(["fio", "--version"], text=True).strip()
+                print(f"  {C.GREEN}fio installed: {ver}{C.RESET}")
+                return
+            print(f"  {C.RED}fio still not on PATH after install.{C.RESET}")
+            sys.exit(1)
+
+    print(f"{C.YELLOW}Install it with:{C.RESET}")
+    print(f"  macOS:  brew install fio")
+    print(f"  Linux:  sudo apt-get install fio")
+    sys.exit(1)
+
+
+def ensure_matplotlib() -> bool:
+    """Import matplotlib + numpy, offering to pip install them if missing.
+    Returns True if both are now importable."""
+    try:
+        import matplotlib  # noqa: F401
+        import numpy       # noqa: F401
+        import matplotlib as _m
+        print(f"  {C.DIM}matplotlib: {_m.__version__}{C.RESET}")
+        return True
+    except ImportError:
+        pass
+
+    print(f"  {C.YELLOW}matplotlib + numpy are not installed.{C.RESET}")
+    if not _prompt_yes("Install via pip (charts won't generate without them)?"):
+        print(f"  {C.YELLOW}charts will be skipped. Install later with: "
+              f"pip3 install matplotlib numpy{C.RESET}")
+        return False
+
+    # --user keeps it out of the system site-packages on Linux/Homebrew Python.
+    # If that fails (already in a venv where --user is rejected), retry without.
+    cmds = [
+        [sys.executable, "-m", "pip", "install", "--user", "matplotlib", "numpy"],
+        [sys.executable, "-m", "pip", "install", "matplotlib", "numpy"],
+    ]
+    for cmd in cmds:
+        if _run_install(cmd):
+            break
+    else:
+        print(f"  {C.RED}install failed; charts will be skipped.{C.RESET}")
+        return False
+
+    import importlib
+    importlib.invalidate_caches()
+    try:
+        import matplotlib as _m
+        import numpy  # noqa: F401
+        print(f"  {C.GREEN}matplotlib installed: {_m.__version__}{C.RESET}")
+        return True
+    except ImportError:
+        print(f"  {C.YELLOW}install completed but matplotlib still not importable; "
+              f"charts will be skipped.{C.RESET}")
+        return False
 
 
 def run_fio_test(test: dict, directory: str, label: str) -> dict:
@@ -1807,18 +1885,9 @@ def main():
     print(f"{C.BOLD}Checking dependencies...{C.RESET}")
     check_fio()
 
-    has_matplotlib = True
+    has_matplotlib = False
     if not args.skip_charts:
-        try:
-            import matplotlib
-            import numpy
-            print(f"  {C.DIM}matplotlib: {matplotlib.__version__}{C.RESET}")
-        except ImportError:
-            print(f"  {C.YELLOW}matplotlib not found -- charts will be skipped.{C.RESET}")
-            print(f"  {C.YELLOW}Install with: pip3 install matplotlib numpy{C.RESET}")
-            has_matplotlib = False
-    else:
-        has_matplotlib = False
+        has_matplotlib = ensure_matplotlib()
 
     print()
 

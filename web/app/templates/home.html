@@ -39,7 +39,7 @@
                     <span class="lb-value">{% if row.primary_unit == 'IOPS' %}{{ '{:,.0f}'.format(row.primary_value) }}{% else %}{{ '{:,.1f}'.format(row.primary_value) }}{% endif %}</span>
                 </li>
             {% else %}
-                <li class="empty">No results yet — be the first.</li>
+                <li class="empty">No data yet</li>
             {% endfor %}
             </ol>
         </div>

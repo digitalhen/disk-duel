@@ -261,7 +261,15 @@ code {
     font-size: 15px;
     color: var(--text);
 }
-.lb-list .empty { color: var(--dim); font-size: 13px; text-align: center; padding: 14px 0; grid-column: 1 / -1; }
+.lb-list .empty {
+    display: block;
+    padding: 22px 8px;
+    color: var(--dim);
+    font-size: 12px;
+    text-align: center;
+    font-style: italic;
+    border-top: none;
+}
 
 /* ── tables (drives, recent runs, run results, etc.) ───────────────── */
 .panel {
