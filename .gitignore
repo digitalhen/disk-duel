@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+disk_duel_report.html
+disk_duel_report.json
+.disk_duel_testfile
+.disk_duel_write_test
