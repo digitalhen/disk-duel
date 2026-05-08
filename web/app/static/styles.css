@@ -63,6 +63,79 @@ pre code { background: transparent; padding: 0; }
 
 .cta { font-size: 0.9em; }
 
+/* Copyable terminal block, à la modern install-instruction blocks */
+.terminal {
+    position: relative;
+    background: #010409;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0;
+    margin: 16px 0;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.terminal-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 14px;
+    background: #0d1117;
+    border-bottom: 1px solid var(--line);
+}
+.terminal-bar .dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #30363d;
+}
+.terminal-bar .dot.r { background: #ff5f57; }
+.terminal-bar .dot.y { background: #febc2e; }
+.terminal-bar .dot.g { background: #28c840; }
+.terminal-bar .label {
+    margin-left: auto;
+    color: var(--dim);
+    font-size: 0.75em;
+    font-family: ui-monospace, 'SF Mono', monospace;
+    letter-spacing: 0.05em;
+}
+.terminal-body {
+    display: block;
+    padding: 16px 18px;
+    font-family: ui-monospace, 'SF Mono', monospace;
+    font-size: 0.88em;
+    line-height: 1.55;
+    color: #e6edf3;
+    overflow-x: auto;
+    white-space: pre;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    margin: 0;
+}
+.terminal-body .prompt { color: var(--good); user-select: none; padding-right: 8px; }
+.terminal-body code { background: transparent; padding: 0; color: inherit; }
+.copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background: rgba(110,118,129,0.15);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.75em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.copy-btn:hover { background: rgba(110,118,129,0.3); }
+.copy-btn.copied {
+    background: rgba(63,185,80,0.15);
+    color: var(--good);
+    border-color: rgba(63,185,80,0.4);
+}
+
 .hero p { color: var(--muted); margin-bottom: 16px; max-width: 720px; }
 
 table { width: 100%; border-collapse: collapse; font-size: 0.92em; }

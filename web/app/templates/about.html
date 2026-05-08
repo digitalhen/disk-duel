@@ -6,15 +6,39 @@
 
     <p>The <a href="https://github.com/digitalhen/disk-duel">disk-duel</a> script runs a 19-test <code>fio</code>-based suite on one or two drives, generates a local HTML report, and (optionally) uploads the results here.</p>
 
-    <h2>1. Run the script</h2>
-    <pre><code>curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py &amp;&amp; python3 /tmp/disk_duel.py</code></pre>
-    <p>The interactive menu auto-detects your drives. Pick one for a solo run, two to compare. Make sure <code>fio</code> is installed (<code>brew install fio</code> on macOS).</p>
+    {% set run_only = 'curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py' %}
+    {% set run_upload = run_only + ' --upload' %}
+    {% set fio_brew = 'brew install fio' %}
 
-    <h2>2. Upload</h2>
-    <p>Pass <code>--upload</code>, or just say yes to the prompt at the end of the run:</p>
-    <pre><code>python3 /tmp/disk_duel.py --upload</code></pre>
-    <p>No API key required. The script does a small proof-of-work (<code>~1-2 s</code> on a recent laptop) before submitting — that's the spam protection. On success it prints the public URLs for your run and your machine.</p>
-    <p>Both URLs are stable, opaque slugs. Your hardware serial is hashed (<code>sha256</code>) before storage and never displayed publicly.</p>
+    <h2>1. Install fio</h2>
+    <p>The script needs <code>fio</code> for the actual benchmark.</p>
+    <div class="terminal">
+        <div class="terminal-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="label">macOS</span>
+        </div>
+        <button class="copy-btn" data-copy="{{ fio_brew }}" type="button">Copy</button>
+        <pre class="terminal-body"><code><span class="prompt">$</span>{{ fio_brew }}</code></pre>
+    </div>
+    <p class="muted">Linux: <code>sudo apt-get install fio</code> (Debian/Ubuntu) or your distro's equivalent.</p>
+
+    <h2>2. Run &amp; publish</h2>
+    <p>One line. Downloads the script, launches the interactive drive menu, and uploads at the end.</p>
+    <div class="terminal">
+        <div class="terminal-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="label">run &amp; publish</span>
+        </div>
+        <button class="copy-btn" data-copy="{{ run_upload }}" type="button">Copy</button>
+        <pre class="terminal-body"><code><span class="prompt">$</span>{{ run_upload }}</code></pre>
+    </div>
+    <p class="muted">Don't want to upload? Drop <code>--upload</code>. The HTML/JSON report still lands in your current directory.</p>
+
+    <h2>How submissions are protected</h2>
+    <p>The submit endpoint is unauthenticated — the script is open source so an embedded API key would be theater. Instead the script does a small proof-of-work (~1–2 s on a recent laptop) before posting; the server also rate-limits per machine (one upload / 60 s) and per IP. Replays of an old payload are rejected because timestamps must be fresh within ±5 min.</p>
+
+    <h2>Privacy</h2>
+    <p>URLs use opaque <code>hashids</code> slugs. Your hardware serial is hashed (<code>sha256</code>) on the server before storage and is never returned in any API response or rendered in any page.</p>
 
     <h2>What's stored</h2>
     <ul>

@@ -27,10 +27,10 @@ Connect to whatever Postgres instance you want to host the project-scoped DB.
 
 2. Create `web/.env` from `web/.env.example` and fill in:
    - `DATABASE_URL` — e.g. `postgresql+psycopg://diskduel:<pw>@$DB_HOST:5432/diskduel`
-   - `DISK_DUEL_API_KEY` — `openssl rand -hex 32`
    - `HASHIDS_SALT` — `openssl rand -hex 16`. **Changing this invalidates every existing public URL.**
-   - `ROOT_PATH` — `/diskduel` in production, empty for local
+   - `ROOT_PATH` — `/disk-duel` in production, empty for local
    - `PUBLIC_BASE_URL` — base URL the API returns to the script
+   - `DISK_DUEL_API_KEY` — *optional*; reserved for future admin endpoints, not used by the public submit path
 
 3. Apply migrations:
 

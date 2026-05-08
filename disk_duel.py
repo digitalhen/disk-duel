@@ -1711,7 +1711,7 @@ def main():
     upload_group = parser.add_mutually_exclusive_group()
     upload_group.add_argument(
         "--upload", action="store_true",
-        help="Submit the result to the public leaderboard. Requires DISK_DUEL_API_KEY in the environment."
+        help="Submit the result to the public leaderboard at apps.cleartextlabs.com/disk-duel."
     )
     upload_group.add_argument(
         "--no-upload", action="store_true",

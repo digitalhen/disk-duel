@@ -3,8 +3,18 @@
 <section class="hero">
     <h1>Real-world drive benchmarks.</h1>
     <p>Crowdsourced <code>fio</code> results from real machines. {{ counts.machines }} machines · {{ counts.drives }} unique drives · {{ counts.runs }} runs.</p>
-    <pre class="cta"><code>curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py &amp;&amp; python3 /tmp/disk_duel.py</code></pre>
-    <p class="muted">Set <code>DISK_DUEL_API_KEY</code> and pass <code>--upload</code> to publish your results here. <a href="{{ request.url_for('about') }}">More info →</a></p>
+
+    {% set install_cmd = 'curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py --upload' %}
+    <div class="terminal">
+        <div class="terminal-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="label">run &amp; publish</span>
+        </div>
+        <button class="copy-btn" data-copy="{{ install_cmd }}" type="button">Copy</button>
+        <pre class="terminal-body"><code><span class="prompt">$</span>{{ install_cmd }}</code></pre>
+    </div>
+
+    <p class="muted">Pass <code>--upload</code> (or just say yes to the prompt at the end) to publish your results here. No API key needed. <a href="{{ request.url_for('about') }}">How it works →</a></p>
 </section>
 
 <section class="boards">
