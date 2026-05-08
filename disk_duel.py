@@ -1110,36 +1110,72 @@ def _diskutil_info(target: str) -> dict:
 
 
 def _detect_enclosures() -> dict:
-    """Best-effort: walk SPThunderboltDataType + SPUSBDataType and return
-    a dict of bsd_name -> 'Enclosure name (Vendor)'. Often empty if the
-    OS doesn't surface a child media node, but worth a try."""
-    enclosures: dict = {}
+    """Best-effort: return a dict of bsd_name -> 'Enclosure (Vendor)'.
+
+    Strategy:
+      1. Scrape the *text* output of system_profiler SPThunderboltDataType
+         for non-Apple {Vendor Name, Device Name} pairs (these are
+         enclosures). The JSON variant drops the vendor field on nested
+         devices, so text parsing gets us strictly more info.
+      2. Identify external NVMe drives by their controller name in
+         SPNVMeDataType (-json) — anything not under 'Apple SSD Controller'
+         is behind an external enclosure.
+      3. Pair them up in declaration order if the counts match, or
+         broadcast a single enclosure across all external drives.
+
+    USB-connected enclosures (e.g. NVMe-to-USB) aren't covered yet; they'd
+    follow the same pattern with SPUSBDataType."""
     if sys.platform != "darwin":
-        return enclosures
+        return {}
 
-    def walk(items, ancestor=None):
-        for it in items:
-            name = it.get("_name") or ancestor
-            vendor = it.get("manufacturer") or it.get("vendor_name_key") or ""
-            for media in it.get("Media", []) or []:
-                bsd = media.get("bsd_name") or media.get("BSD Name")
+    import re
+
+    enclosures = []
+    try:
+        out = subprocess.check_output(
+            ["system_profiler", "SPThunderboltDataType"],
+            text=True, timeout=10,
+        )
+        pat = re.compile(r"Vendor Name:\s+(.+?)\s*\n\s*Device Name:\s+(.+?)\s*\n")
+        for m in pat.finditer(out):
+            vendor = m.group(1).strip()
+            name = m.group(2).strip()
+            if "apple" not in vendor.lower():
+                enclosures.append({"vendor": vendor, "name": name})
+    except Exception:
+        pass
+
+    ext_bsds: list = []
+    try:
+        out = subprocess.check_output(
+            ["system_profiler", "SPNVMeDataType", "-json"],
+            text=True, timeout=10,
+        )
+        for ctrl in json.loads(out).get("SPNVMeDataType", []):
+            if "apple" in (ctrl.get("_name", "") or "").lower():
+                continue
+            for it in ctrl.get("_items", []) or []:
+                bsd = it.get("bsd_name")
                 if bsd:
-                    enclosures[bsd] = f"{name} ({vendor})" if vendor else (name or "")
-            for sub in it.get("_items", []) or []:
-                walk([sub], name)
+                    ext_bsds.append(bsd)
+    except Exception:
+        pass
 
-    for sp_type in ("SPThunderboltDataType", "SPUSBDataType"):
-        try:
-            out = subprocess.check_output(
-                ["system_profiler", sp_type, "-json"],
-                text=True, timeout=10,
-            )
-            data = json.loads(out).get(sp_type, [])
-            walk(data)
-        except Exception:
-            pass
+    result: dict = {}
+    if not ext_bsds or not enclosures:
+        return result
+    if len(ext_bsds) == len(enclosures):
+        pairs = zip(ext_bsds, enclosures)
+    elif len(enclosures) == 1:
+        # One enclosure, multiple drives (e.g. multi-bay box) — share it.
+        pairs = ((b, enclosures[0]) for b in ext_bsds)
+    else:
+        # Ambiguous: don't guess.
+        return result
 
-    return enclosures
+    for bsd, enc in pairs:
+        result[bsd] = f"{enc['name']} ({enc['vendor']})"
+    return result
 
 
 def _is_writable(path: str) -> bool:
@@ -1187,12 +1223,24 @@ def detect_drives() -> list:
         if any(x in bus.upper() for x in ("SMB", "AFP", "NFS")):
             continue
 
+        # On APFS, ParentWholeDisk points at the synthesized container disk
+        # (e.g. disk5), but SPNVMeDataType identifies physical drives by their
+        # bare disk name (e.g. disk4). Resolve through APFSPhysicalStores.
         parent = info.get("ParentWholeDisk", "")
-        if not parent or parent in seen:
-            continue
-        seen.add(parent)
+        phys_disk = parent
+        stores = info.get("APFSPhysicalStores") or []
+        if stores:
+            store_id = stores[0].get("APFSPhysicalStore", "") if isinstance(stores[0], dict) else ""
+            import re as _re
+            m = _re.match(r"^(disk\d+)", store_id or "")
+            if m:
+                phys_disk = m.group(1)
 
-        parent_info = _diskutil_info(parent)
+        if not phys_disk or phys_disk in seen:
+            continue
+        seen.add(phys_disk)
+
+        parent_info = _diskutil_info(phys_disk)
         media = (parent_info.get("MediaName") or info.get("MediaName") or "").strip()
         if media.endswith(" Media"):
             media = media[:-6]
@@ -1227,8 +1275,8 @@ def detect_drives() -> list:
             "free_gb": free / (1024**3),
             "size_gb": size / (1024**3),
             "writable": bool(writable),
-            "enclosure": enclosures.get(parent),
-            "device": parent,
+            "enclosure": enclosures.get(phys_disk),
+            "device": phys_disk,
         })
 
     drives.sort(key=lambda d: (not d["writable"], -d["free_gb"]))
