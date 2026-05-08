@@ -4,37 +4,23 @@ Comprehensive `fio`-based drive benchmark with a scored HTML report. Compare two
 
 The benchmark suite covers sequential throughput, random 4K IOPS at QD1/4/16/32, large-block random, mixed read/write, sustained sequential write, and QD1 latency — 19 tests total.
 
-## Quick start (no install)
+## Quick start
 
-Download and run straight from GitHub. The interactive menu kicks in when no positional args are given:
+One line. Downloads the script and launches the interactive drive menu — no install, no clone.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py
 ```
 
-To compare two specific paths, append them:
+The HTML/JSON report lands in your current directory. Make sure `fio` is installed (`brew install fio` on macOS, `sudo apt-get install fio` on Debian/Ubuntu) — the script tells you if it's missing.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py /path/to/drive_a /path/to/drive_b
-```
+> Why download-then-run instead of `curl … | python3 -`? The interactive menu reads from stdin, which the pipe would have already consumed.
 
-To benchmark a single drive:
+If you'd rather skip the menu and pass paths directly, append them — `python3 /tmp/disk_duel.py /Volumes/A /Volumes/B` (dual) or `python3 /tmp/disk_duel.py /Volumes/A` (solo).
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py /path/to/drive
-```
+## What the interactive menu does
 
-> Note: piping `curl … | python3 -` directly doesn't work because the interactive menu needs stdin, so the one-liner downloads the script first. The HTML/JSON report lands in the current working directory. Make sure `fio` is installed (`brew install fio` on macOS, `sudo apt-get install fio` on Debian/Ubuntu) — the script will tell you if it's missing.
-
-## Interactive mode (recommended on macOS)
-
-Run with no positional arguments to get a menu of detected drives:
-
-```bash
-python3 disk_duel.py
-```
-
-The script will:
+When you run with no positional arguments (which is what the curl one-liner above does), the script:
 
 1. **Identify the host** — model, chip, RAM, and serial number (via `system_profiler SPHardwareDataType`). The serial is included in the JSON output so reports from different machines can be told apart.
 2. **List local physical drives** — by walking `/` and `/Volumes/*`, calling `diskutil info -plist` on each, and collapsing volumes that share a parent disk. Network shares (SMB/NFS/AFP) and APFS snapshots are filtered out. For each drive you see: volume name, media name (e.g. `WD_BLACK SN850X 4000GB`), Internal vs External, bus protocol (Apple Fabric / PCI-Express / USB / Thunderbolt), and free/total space.
