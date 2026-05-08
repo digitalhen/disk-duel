@@ -43,7 +43,7 @@
                 <tr>
                     <td>{{ r.ts.strftime('%Y-%m-%d %H:%M') }}</td>
                     <td>{{ r.mode }}</td>
-                    <td>{{ r.label_a }}{% if r.label_b %} <span class="muted">vs</span> {{ r.label_b }}{% endif %}</td>
+                    <td>{{ r.drive_a.media_name }}{% if r.drive_b %} <span class="muted">vs</span> {{ r.drive_b.media_name }}{% endif %}</td>
                     <td><a href="{{ request.url_for('run_detail', slug=r.slug) }}">view →</a></td>
                 </tr>
             {% endfor %}

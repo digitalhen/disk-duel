@@ -119,6 +119,7 @@ def home(
     recent = db.execute(
         select(Run, Machine)
         .join(Machine, Run.machine_id == Machine.id)
+        .options(selectinload(Run.drive_a), selectinload(Run.drive_b))
         .order_by(Run.ts.desc())
         .limit(10)
     ).all()
@@ -143,7 +144,11 @@ def machine(slug: str, request: Request, db: Session = Depends(get_db)) -> HTMLR
     m = db.scalar(
         select(Machine)
         .where(Machine.slug == slug)
-        .options(selectinload(Machine.drives), selectinload(Machine.runs))
+        .options(
+            selectinload(Machine.drives),
+            selectinload(Machine.runs).selectinload(Run.drive_a),
+            selectinload(Machine.runs).selectinload(Run.drive_b),
+        )
     )
     if m is None:
         raise HTTPException(404)

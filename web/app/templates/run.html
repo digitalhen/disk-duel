@@ -5,7 +5,7 @@
 {% endblock %}
 {% block content %}
 <section>
-    <h1>{{ run.label_a }}{% if run.label_b %} <span class="dim" style="font-weight: 300;">vs</span> {{ run.label_b }}{% endif %}</h1>
+    <h1>{{ run.drive_a.media_name }}{% if run.drive_b %} <span class="dim" style="font-weight: 300;">vs</span> {{ run.drive_b.media_name }}{% endif %}</h1>
     <div class="kvs">
         <span><strong>Machine:</strong> <a href="{{ request.url_for('machine', slug=run.machine.slug) }}">{{ run.machine.machine_model or run.machine.machine_name or 'unknown' }}</a></span>
         <span><strong>Mode:</strong> {{ run.mode }}</span>
@@ -15,15 +15,13 @@
 
     <div class="run-drives">
         <div class="drive-card">
-            <h3>{{ run.label_a }}</h3>
-            <p class="media">{{ run.drive_a.media_name }}</p>
-            <p class="meta">{{ run.drive_a.bus_protocol or '' }}{% if run.drive_a.enclosure_name %} · {{ run.drive_a.enclosure_name }}{% endif %}{% if run.drive_a.size_gb %} · {{ '%.0f GB' | format(run.drive_a.size_gb) }}{% endif %}</p>
+            <h3>{{ run.drive_a.media_name }}</h3>
+            <p class="meta">{{ run.drive_a.bus_protocol or '—' }}{% if run.drive_a.enclosure_name %} · {{ run.drive_a.enclosure_name }}{% endif %}{% if run.drive_a.size_gb %} · {{ '%.0f GB' | format(run.drive_a.size_gb) }}{% endif %}{% if run.drive_a.internal %} · internal{% else %} · external{% endif %}</p>
         </div>
         {% if run.drive_b %}
         <div class="drive-card alt">
-            <h3>{{ run.label_b }}</h3>
-            <p class="media">{{ run.drive_b.media_name }}</p>
-            <p class="meta">{{ run.drive_b.bus_protocol or '' }}{% if run.drive_b.enclosure_name %} · {{ run.drive_b.enclosure_name }}{% endif %}{% if run.drive_b.size_gb %} · {{ '%.0f GB' | format(run.drive_b.size_gb) }}{% endif %}</p>
+            <h3>{{ run.drive_b.media_name }}</h3>
+            <p class="meta">{{ run.drive_b.bus_protocol or '—' }}{% if run.drive_b.enclosure_name %} · {{ run.drive_b.enclosure_name }}{% endif %}{% if run.drive_b.size_gb %} · {{ '%.0f GB' | format(run.drive_b.size_gb) }}{% endif %}{% if run.drive_b.internal %} · internal{% else %} · external{% endif %}</p>
         </div>
         {% endif %}
     </div>
@@ -45,8 +43,8 @@
             <thead>
                 <tr>
                     <th>Test</th>
-                    <th>{{ run.label_a }}</th>
-                    {% if run.drive_b %}<th>{{ run.label_b }}</th><th>Δ</th>{% endif %}
+                    <th>{{ run.drive_a.media_name }}</th>
+                    {% if run.drive_b %}<th>{{ run.drive_b.media_name }}</th><th>Δ</th>{% endif %}
                     <th>Unit</th>
                 </tr>
             </thead>
@@ -91,8 +89,8 @@
 {% if run.mode == 'dual' %}
 <script id="chart-data" type="application/json">
 {
-  "label_a": {{ run.label_a | tojson }},
-  "label_b": {{ run.label_b | tojson }},
+  "label_a": {{ run.drive_a.media_name | tojson }},
+  "label_b": {{ (run.drive_b.media_name if run.drive_b else "") | tojson }},
   "tests": [
     {% for name, group in tests %}
         {% set a = group.get('a') %}

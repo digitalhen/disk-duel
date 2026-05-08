@@ -123,7 +123,7 @@
                     <td>{{ run.ts.strftime('%Y-%m-%d %H:%M') }}</td>
                     <td><a href="{{ request.url_for('machine', slug=machine.slug) }}">{{ machine.machine_model or machine.machine_name or 'unknown' }}</a></td>
                     <td>{{ run.mode }}</td>
-                    <td>{{ run.label_a }}{% if run.label_b %} <span class="muted">vs</span> {{ run.label_b }}{% endif %}</td>
+                    <td>{{ run.drive_a.media_name }}{% if run.drive_b %} <span class="muted">vs</span> {{ run.drive_b.media_name }}{% endif %}</td>
                     <td><a href="{{ request.url_for('run_detail', slug=run.slug) }}">view →</a></td>
                 </tr>
             {% endfor %}
