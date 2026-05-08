@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-Disk Duel — Comprehensive Drive Benchmark & Comparison Tool
+Disk Duel -- Comprehensive Drive Benchmark & Comparison Tool
 
-Runs a full suite of I/O benchmarks on two drives using fio,
-then generates charts and an HTML report with a scored winner
-for every test.
+Runs a full suite of I/O benchmarks on one or two drives using fio,
+and generates an HTML report. In dual mode, every test is scored with
+a winner and the report includes comparison charts. In solo mode,
+the report is a single-drive scorecard.
 
 Requirements:
     brew install fio
-    pip3 install matplotlib numpy
+    pip3 install matplotlib numpy   # only needed for dual-mode charts
 
-Usage:
+Usage (dual / comparison):
     python3 disk_duel.py /path/to/drive_a /path/to/drive_b
     python3 disk_duel.py /Volumes/Internal /Volumes/External --labels "Internal SSD" "TB5 Enclosure"
-    python3 disk_duel.py /tmp/a /tmp/b --quick          # shorter test for validation
-    python3 disk_duel.py /tmp/a /tmp/b --size-multiplier 2  # larger test files for accuracy
+    python3 disk_duel.py /tmp/a /tmp/b --quick
+
+Usage (solo / single drive):
+    python3 disk_duel.py /Volumes/MyDrive
+    python3 disk_duel.py /Volumes/MyDrive --labels "Crucial T705" --quick
 """
 
 import argparse
@@ -1034,6 +1038,154 @@ def validate_path(path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Solo (single-drive) summary + report
+# ---------------------------------------------------------------------------
+def print_summary_solo(results: list, label: str):
+    """Print a formatted summary for a single-drive benchmark."""
+    print(f"\n{C.BOLD}{'='*70}{C.RESET}")
+    print(f"{C.BOLD}{C.CYAN}  RESULTS SUMMARY -- {label}{C.RESET}")
+    print(f"{C.BOLD}{'='*70}{C.RESET}\n")
+
+    col1 = 36
+    col2 = 18
+    col3 = 14
+    header = f"  {'Test':<{col1}}{'Result':>{col2}}  {'Unit':<{col3}}"
+    print(f"{C.BOLD}{header}{C.RESET}")
+    print(f"  {'-'*col1}{'-'*col2}  {'-'*col3}")
+
+    for r in results:
+        unit = r.get("primary_unit", "")
+        val = r.get("primary_value", 0)
+        if "IOPS" in unit:
+            v_str = f"{val:,.0f}"
+        else:
+            v_str = f"{val:,.1f}"
+        v_padded = f"{v_str:>{col2}}"
+        name_short = r["test_name"][:col1-2]
+        print(f"  {name_short:<{col1}}{C.GREEN}{v_padded}{C.RESET}  {C.DIM}{unit:<{col3}}{C.RESET}")
+
+    print(f"\n{C.BOLD}{'='*70}{C.RESET}\n")
+
+
+def generate_html_report_solo(
+    results: list,
+    label: str,
+    output_path: str,
+    path: str,
+):
+    """Generate a single-drive HTML report (no comparison, no charts)."""
+    rows_html = ""
+    for r in results:
+        unit = r.get("primary_unit", "")
+        val = r.get("primary_value", 0)
+        if "IOPS" in unit:
+            v_fmt = f"{val:,.0f}"
+        else:
+            v_fmt = f"{val:,.1f}"
+
+        rows_html += f"""
+        <tr>
+            <td class="test-name">{r['test_name']}</td>
+            <td class="value">{v_fmt} <span class="unit">{unit}</span></td>
+            <td class="category">{r.get('category', '')}</td>
+        </tr>"""
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disk Duel Report -- {label}</title>
+<style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
+        background: #0d1117;
+        color: #c9d1d9;
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+        line-height: 1.6;
+        padding: 40px 20px;
+    }}
+    .container {{ max-width: 900px; margin: 0 auto; }}
+    h1 {{
+        font-size: 2.4em;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        margin-bottom: 8px;
+        background: linear-gradient(135deg, #58a6ff, #f78166);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }}
+    .subtitle {{ color: #8b949e; font-size: 0.95em; margin-bottom: 30px; }}
+    table {{
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 40px;
+        font-size: 0.9em;
+    }}
+    th {{
+        background: #161b22;
+        padding: 12px 16px;
+        text-align: left;
+        border-bottom: 2px solid #30363d;
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 0.8em;
+        letter-spacing: 0.05em;
+        color: #8b949e;
+    }}
+    td {{
+        padding: 10px 16px;
+        border-bottom: 1px solid #21262d;
+    }}
+    .test-name {{ font-weight: 600; color: #e6edf3; }}
+    .value {{ color: #3fb950; font-weight: 700; }}
+    .unit {{ color: #484f58; font-size: 0.85em; font-weight: 400; }}
+    .category {{ color: #8b949e; font-size: 0.85em; text-transform: capitalize; }}
+    .meta {{
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 1px solid #21262d;
+        color: #484f58;
+        font-size: 0.8em;
+    }}
+    tr:hover {{ background: rgba(88,166,255,0.04); }}
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>Disk Duel</h1>
+    <div class="subtitle">
+        Solo benchmark of <strong>{label}</strong> (<code>{path}</code>)
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Test</th>
+                <th>Result</th>
+                <th>Category</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows_html}
+        </tbody>
+    </table>
+
+    <div class="meta">
+        Generated {timestamp} by Disk Duel &bull; fio-based benchmarks &bull;
+        Results may vary with drive temperature, background I/O, and filesystem state.
+    </div>
+</div>
+</body>
+</html>"""
+
+    with open(output_path, "w") as f:
+        f.write(html)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -1041,11 +1193,14 @@ def main():
         description="Disk Duel -- Comprehensive Drive Benchmark & Comparison",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("path_a", help="Path/mount point for Drive A")
-    parser.add_argument("path_b", help="Path/mount point for Drive B")
+    parser.add_argument("path_a", help="Path/mount point for Drive A (or the only drive in solo mode)")
     parser.add_argument(
-        "--labels", nargs=2, default=None, metavar=("LABEL_A", "LABEL_B"),
-        help="Labels for the two drives (default: path basenames)"
+        "path_b", nargs="?", default=None,
+        help="(Optional) Path/mount point for Drive B. Omit to run solo benchmark on path_a only."
+    )
+    parser.add_argument(
+        "--labels", nargs="+", default=None, metavar="LABEL",
+        help="Labels for the drives (1 label in solo mode, 2 in dual mode; default: path basenames)"
     )
     parser.add_argument(
         "--quick", action="store_true",
@@ -1071,15 +1226,26 @@ def main():
     # Validate paths
     print(f"{C.BOLD}Validating drives...{C.RESET}")
     path_a = validate_path(args.path_a)
-    path_b = validate_path(args.path_b)
+    path_b = validate_path(args.path_b) if args.path_b else None
+    solo = path_b is None
 
-    labels = tuple(args.labels) if args.labels else (
-        os.path.basename(path_a) or path_a,
-        os.path.basename(path_b) or path_b,
-    )
-
-    print(f"  Drive A: {C.BLUE}{C.BOLD}{labels[0]}{C.RESET} ({path_a})")
-    print(f"  Drive B: {C.RED}{C.BOLD}{labels[1]}{C.RESET} ({path_b})")
+    if solo:
+        if args.labels:
+            labels = (args.labels[0],)
+        else:
+            labels = (os.path.basename(path_a) or path_a,)
+        print(f"  Drive:   {C.BLUE}{C.BOLD}{labels[0]}{C.RESET} ({path_a})")
+        print(f"  {C.YELLOW}Solo mode -- no comparison.{C.RESET}")
+    else:
+        if args.labels and len(args.labels) >= 2:
+            labels = (args.labels[0], args.labels[1])
+        else:
+            labels = (
+                os.path.basename(path_a) or path_a,
+                os.path.basename(path_b) or path_b,
+            )
+        print(f"  Drive A: {C.BLUE}{C.BOLD}{labels[0]}{C.RESET} ({path_a})")
+        print(f"  Drive B: {C.RED}{C.BOLD}{labels[1]}{C.RESET} ({path_b})")
     print()
 
     # Check fio
@@ -1105,15 +1271,18 @@ def main():
     tests = get_test_suite(quick=args.quick, size_mult=args.size_multiplier)
     total_tests = len(tests)
 
-    print(f"{C.BOLD}Running {total_tests} benchmarks on each drive "
-          f"({total_tests * 2} total tests)...{C.RESET}")
+    drive_count = 1 if solo else 2
+    print(f"{C.BOLD}Running {total_tests} benchmarks on "
+          f"{'the drive' if solo else 'each drive'} "
+          f"({total_tests * drive_count} total tests)...{C.RESET}")
     if args.quick:
         print(f"  {C.YELLOW}(quick mode -- shorter runtimes){C.RESET}")
     print()
 
     # Run benchmarks
     all_results = []
-    scored_results = []
+    scored_results = []  # only populated in dual mode
+    solo_results = []    # only populated in solo mode
 
     for i, test in enumerate(tests):
         test_num = i + 1
@@ -1130,6 +1299,17 @@ def main():
             continue
         val_a = result_a["primary_value"]
         print(f"{C.GREEN}{val_a:,.1f} {test['unit']}{C.RESET} ({elapsed_a:.1f}s)")
+
+        if solo:
+            all_results.append(result_a)
+            solo_results.append({
+                "test_name": test["name"],
+                "category": test["category"],
+                "primary_unit": test["unit"],
+                "primary_value": val_a,
+            })
+            print()
+            continue
 
         # Drive B
         print(f"  {C.RED}{labels[1]}{C.RESET}...", end=" ", flush=True)
@@ -1170,11 +1350,14 @@ def main():
         print()
 
     # Print console summary
-    print_summary(scored_results, labels)
+    if solo:
+        print_summary_solo(solo_results, labels[0])
+    else:
+        print_summary(scored_results, labels)
 
-    # Generate charts
+    # Generate charts (dual mode only)
     charts = {}
-    if has_matplotlib and not args.skip_charts:
+    if not solo and has_matplotlib and not args.skip_charts:
         print(f"{C.BOLD}Generating charts...{C.RESET}")
         try:
             charts["sequential"] = chart_sequential(all_results, labels)
@@ -1191,28 +1374,48 @@ def main():
     # Generate HTML report
     output_path = args.output or os.path.join(os.getcwd(), "disk_duel_report.html")
     print(f"{C.BOLD}Generating HTML report...{C.RESET}")
-    generate_html_report(
-        scored_results=scored_results,
-        labels=labels,
-        charts=charts,
-        output_path=output_path,
-        paths=(path_a, path_b),
-    )
+    if solo:
+        generate_html_report_solo(
+            results=solo_results,
+            label=labels[0],
+            output_path=output_path,
+            path=path_a,
+        )
+    else:
+        generate_html_report(
+            scored_results=scored_results,
+            labels=labels,
+            charts=charts,
+            output_path=output_path,
+            paths=(path_a, path_b),
+        )
     print(f"  {C.GREEN}Report saved to: {output_path}{C.RESET}")
 
     # Also dump raw JSON results
     json_path = output_path.replace(".html", ".json")
     with open(json_path, "w") as f:
-        json.dump({
-            "timestamp": datetime.now().isoformat(),
-            "labels": labels,
-            "paths": [path_a, path_b],
-            "results": scored_results,
-            "all_results": [
-                {k: v for k, v in r.items() if k != "score"}
-                for r in all_results
-            ],
-        }, f, indent=2, default=str)
+        if solo:
+            payload = {
+                "timestamp": datetime.now().isoformat(),
+                "mode": "solo",
+                "label": labels[0],
+                "path": path_a,
+                "results": solo_results,
+                "all_results": all_results,
+            }
+        else:
+            payload = {
+                "timestamp": datetime.now().isoformat(),
+                "mode": "dual",
+                "labels": labels,
+                "paths": [path_a, path_b],
+                "results": scored_results,
+                "all_results": [
+                    {k: v for k, v in r.items() if k != "score"}
+                    for r in all_results
+                ],
+            }
+        json.dump(payload, f, indent=2, default=str)
     print(f"  {C.GREEN}Raw data saved to: {json_path}{C.RESET}")
     print()
     print(f"{C.BOLD}{C.CYAN}Done! Open the HTML report in a browser for the full breakdown.{C.RESET}")
