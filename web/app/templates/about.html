@@ -1,51 +1,35 @@
 {% extends "base.html" %}
-{% block title %}How to run · Disk Duel{% endblock %}
+{% block title %}How it works · Disk Duel{% endblock %}
 {% block content %}
-<section>
-    <h1>How to publish your benchmark</h1>
+{% set fio_brew = 'brew install fio' %}
+{% set run_upload = 'curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py --upload' %}
 
-    <p>The <a href="https://github.com/digitalhen/disk-duel">disk-duel</a> script runs a 19-test <code>fio</code>-based suite on one or two drives, generates a local HTML report, and (optionally) uploads the results here.</p>
+<section class="hero">
+    <h1>How it works.</h1>
+    <p class="lede">A 19-test <code>fio</code> suite, an interactive drive picker, an HTML report — and one line to publish to the leaderboard.</p>
+</section>
 
-    {% set run_only = 'curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py' %}
-    {% set run_upload = run_only + ' --upload' %}
-    {% set fio_brew = 'brew install fio' %}
-
+<section class="steps">
     <h2>1. Install fio</h2>
-    <p>The script needs <code>fio</code> for the actual benchmark.</p>
-    <div class="terminal">
-        <div class="terminal-bar">
-            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-            <span class="label">macOS</span>
-        </div>
-        <button class="copy-btn" data-copy="{{ fio_brew }}" type="button">Copy</button>
-        <pre class="terminal-body"><code><span class="prompt">$</span>{{ fio_brew }}</code></pre>
-    </div>
-    <p class="muted">Linux: <code>sudo apt-get install fio</code> (Debian/Ubuntu) or your distro's equivalent.</p>
+    <p>The benchmark engine itself. macOS:</p>
+    <button class="install-cmd" data-copy="{{ fio_brew }}" type="button">{{ fio_brew }}</button>
+    <p class="cmd-tagline">Linux: <code>sudo apt-get install fio</code> (Debian/Ubuntu) or your distro's equivalent.</p>
 
     <h2>2. Run &amp; publish</h2>
     <p>One line. Downloads the script, launches the interactive drive menu, and uploads at the end.</p>
-    <div class="terminal">
-        <div class="terminal-bar">
-            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
-            <span class="label">run &amp; publish</span>
-        </div>
-        <button class="copy-btn" data-copy="{{ run_upload }}" type="button">Copy</button>
-        <pre class="terminal-body"><code><span class="prompt">$</span>{{ run_upload }}</code></pre>
-    </div>
-    <p class="muted">Don't want to upload? Drop <code>--upload</code>. The HTML/JSON report still lands in your current directory.</p>
+    <button class="install-cmd" data-copy="{{ run_upload }}" type="button">{{ run_upload }}</button>
+    <p class="cmd-tagline">Don't want to upload? Drop <code>--upload</code>. The HTML/JSON report still lands in your current directory.</p>
 
     <h2>How submissions are protected</h2>
-    <p>The submit endpoint is unauthenticated — the script is open source so an embedded API key would be theater. Instead the script does a small proof-of-work (~1–2 s on a recent laptop) before posting; the server also rate-limits per machine (one upload / 60 s) and per IP. Replays of an old payload are rejected because timestamps must be fresh within ±5 min.</p>
+    <p>The submit endpoint is unauthenticated — the script is open source so an embedded API key would be theater. Instead, three layers run server-side, cheapest first:</p>
+    <ul>
+        <li><strong>Per-IP rate limit.</strong> 30 requests / minute, in-process.</li>
+        <li><strong>Per-machine cooldown.</strong> 60 s between uploads from the same hashed serial.</li>
+        <li><strong>Proof of work.</strong> The script computes a SHA-256 with 20 leading zero bits over <code>disk-duel:v1:{serial}:{timestamp}:{nonce}</code> before posting; the server verifies. Roughly 1–2 s on a recent laptop.</li>
+    </ul>
+    <p>Replays of an old payload are rejected — timestamps must be fresh within ±5 minutes.</p>
 
     <h2>Privacy</h2>
-    <p>URLs use opaque <code>hashids</code> slugs. Your hardware serial is hashed (<code>sha256</code>) on the server before storage and is never returned in any API response or rendered in any page.</p>
-
-    <h2>What's stored</h2>
-    <ul>
-        <li><strong>Hardware:</strong> machine model, chip, RAM (no serial number).</li>
-        <li><strong>Drive:</strong> media name (e.g. <em>WD_BLACK SN850X 4000GB</em>), bus protocol, internal/external flag, size, enclosure if external.</li>
-        <li><strong>Per test:</strong> the primary metric (MB/s, IOPS, or p99 latency µs) plus all the bandwidth/IOPS/latency breakdowns <code>fio</code> emits.</li>
-        <li><strong>Raw payload:</strong> the full JSON that the script wrote alongside the local HTML report, kept for future re-rendering.</li>
-    </ul>
+    <p>URLs use opaque <code>hashids</code> slugs. Your hardware serial is hashed (<code>sha256</code>) on the server and never stored, returned, or rendered. Hostname is optional and not surfaced in the UI.</p>
 </section>
 {% endblock %}

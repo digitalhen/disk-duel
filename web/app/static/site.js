@@ -1,27 +1,23 @@
-// Copy-button handler. Delegated so it works for any element with [data-copy].
+// Click-to-copy on .install-cmd or any [data-copy] target.
+// Delegated so it works for elements added later.
 document.addEventListener("click", (e) => {
-    const btn = e.target.closest(".copy-btn[data-copy]");
-    if (!btn) return;
+    const target = e.target.closest("[data-copy]");
+    if (!target) return;
 
-    const text = btn.dataset.copy;
-    const done = () => {
-        const orig = btn.textContent;
-        btn.textContent = "Copied";
-        btn.classList.add("copied");
-        setTimeout(() => {
-            btn.textContent = orig;
-            btn.classList.remove("copied");
-        }, 1400);
+    const text = target.dataset.copy;
+    const flash = () => {
+        target.classList.add("copied");
+        setTimeout(() => target.classList.remove("copied"), 1400);
     };
 
     if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(text).then(done).catch(() => {
+        navigator.clipboard.writeText(text).then(flash).catch(() => {
             fallbackCopy(text);
-            done();
+            flash();
         });
     } else {
         fallbackCopy(text);
-        done();
+        flash();
     }
 });
 
