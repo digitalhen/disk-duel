@@ -1531,6 +1531,96 @@ def generate_html_report_solo(
 SCRIPT_VERSION = "0.2.0"
 DEFAULT_UPLOAD_URL = "https://apps.cleartextlabs.com/disk-duel/api/v1/runs/"
 
+# Proof-of-work parameters. The server verifies that
+#   sha256(f"disk-duel:v1:{serial}:{timestamp}:{nonce}") has at least
+#   POW_DIFFICULTY_BITS leading zero bits. Difficulty 20 averages ~0.5-2 s
+#   on a recent laptop and makes scripted spam meaningfully expensive.
+POW_DIFFICULTY_BITS = 20
+POW_VERSION = "v1"
+
+
+def _has_leading_zero_bits(digest: bytes, bits: int) -> bool:
+    full, partial = divmod(bits, 8)
+    if any(b for b in digest[:full]):
+        return False
+    if partial == 0:
+        return True
+    return (digest[full] >> (8 - partial)) == 0
+
+
+def _compute_pow(serial: str, timestamp: str, difficulty: int = POW_DIFFICULTY_BITS) -> int:
+    import hashlib
+    prefix = f"disk-duel:{POW_VERSION}:{serial}:{timestamp}:".encode()
+    nonce = 0
+    while True:
+        h = hashlib.sha256(prefix + str(nonce).encode()).digest()
+        if _has_leading_zero_bits(h, difficulty):
+            return nonce
+        nonce += 1
+
+
+class _PowSpinner:
+    """Braille spinner with rotating mining-themed verbs while we mine."""
+    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    VERBS = [
+        "Hashing nonces",
+        "Mining entropy",
+        "Forging the seal",
+        "Hammering bytes",
+        "Quarrying for zeros",
+        "Sifting candidates",
+        "Polishing the proof",
+        "Tumbling bits",
+        "Chiseling the work",
+        "Tempering the hash",
+        "Smithing leading zeros",
+        "Wrangling nonces",
+        "Burnishing bytes",
+        "Conjuring entropy",
+        "Sharpening the proof",
+        "Coaxing the SHA",
+        "Wheedling the lock",
+    ]
+
+    def __init__(self):
+        import threading
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def __enter__(self):
+        if not sys.stdout.isatty():
+            return self
+        import threading
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+            sys.stdout.write("\r\033[K")
+            sys.stdout.flush()
+
+    def _run(self):
+        import itertools
+        import random
+        import time
+        frames = itertools.cycle(self.FRAMES)
+        verbs = self.VERBS[:]
+        random.shuffle(verbs)
+        verb_iter = itertools.cycle(verbs)
+        verb = next(verbs.__iter__())
+        next_swap = time.monotonic() + 0.6
+        while not self._stop.is_set():
+            now = time.monotonic()
+            if now >= next_swap:
+                verb = next(verb_iter)
+                next_swap = now + 0.6 + random.random() * 0.4
+            sys.stdout.write(f"\r  {C.CYAN}{next(frames)}{C.RESET} {verb}…")
+            sys.stdout.flush()
+            time.sleep(0.08)
+
 
 def _drive_for_path(path: str, drives: list | None = None) -> dict | None:
     """Return the detected-drive dict whose mount is the longest prefix
@@ -1569,22 +1659,21 @@ def _payload_drive(label: str, path: str, meta: dict | None) -> dict:
     }
 
 
-def upload_results(payload: dict, *, url: str, api_key: str, timeout: int = 30) -> dict:
+def upload_results(
+    payload: dict, *, url: str, api_key: str | None = None, timeout: int = 30,
+) -> dict:
     """POST the payload to the leaderboard. Returns the parsed JSON response."""
     import urllib.request
     import urllib.error
 
     body = json.dumps(payload, default=str).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-API-Key": api_key,
-            "User-Agent": f"disk-duel/{SCRIPT_VERSION}",
-        },
-        method="POST",
-    )
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": f"disk-duel/{SCRIPT_VERSION}",
+    }
+    if api_key:
+        headers["X-API-Key"] = api_key
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -1899,15 +1988,18 @@ def main():
     print(f"  {C.GREEN}Raw data saved to: {json_path}{C.RESET}")
     print()
 
-    # Optional upload to public leaderboard
-    api_key = os.environ.get("DISK_DUEL_API_KEY", "").strip()
+    # Optional upload to public leaderboard. No API key required -- the
+    # endpoint is intentionally unauthenticated (script is open source,
+    # embedded keys are theater). DISK_DUEL_API_KEY is still respected if
+    # set, for future admin-flagged uploads.
     upload_url = os.environ.get("DISK_DUEL_UPLOAD_URL", DEFAULT_UPLOAD_URL).strip()
+    api_key = os.environ.get("DISK_DUEL_API_KEY", "").strip() or None
     should_upload = False
     if args.upload:
         should_upload = True
     elif args.no_upload:
         should_upload = False
-    elif sys.stdin.isatty() and api_key:
+    elif sys.stdin.isatty():
         try:
             ans = input(f"{C.BOLD}Upload to public leaderboard?{C.RESET} [y/N]: ").strip().lower()
             should_upload = ans == "y"
@@ -1915,17 +2007,26 @@ def main():
             should_upload = False
 
     if should_upload:
-        if not api_key:
-            print(f"  {C.YELLOW}DISK_DUEL_API_KEY not set; skipping upload.{C.RESET}")
-        else:
-            print(f"{C.BOLD}Uploading to {upload_url}...{C.RESET}")
-            try:
-                resp = upload_results(payload, url=upload_url, api_key=api_key)
-                print(f"  {C.GREEN}Run:     {resp.get('run_url')}{C.RESET}")
-                print(f"  {C.GREEN}Machine: {resp.get('machine_url')}{C.RESET}")
-            except Exception as e:
-                print(f"  {C.RED}Upload failed: {e}{C.RESET}")
-            print()
+        # Proof-of-work: the public endpoint is unauthenticated, so a small
+        # PoW makes scripted spam non-trivial (~0.5-2s per upload). The
+        # nonce travels in the payload; the server recomputes the hash.
+        serial_for_pow = (host.get("serial_number") or "").strip()
+        ts = payload["timestamp"]
+        print(f"{C.BOLD}Computing proof of work...{C.RESET}")
+        with _PowSpinner():
+            nonce = _compute_pow(serial_for_pow, ts, POW_DIFFICULTY_BITS)
+        payload["pow_nonce"] = nonce
+        payload["pow_difficulty"] = POW_DIFFICULTY_BITS
+        payload["pow_version"] = POW_VERSION
+
+        print(f"{C.BOLD}Uploading to {upload_url}...{C.RESET}")
+        try:
+            resp = upload_results(payload, url=upload_url, api_key=api_key)
+            print(f"  {C.GREEN}Run:     {resp.get('run_url')}{C.RESET}")
+            print(f"  {C.GREEN}Machine: {resp.get('machine_url')}{C.RESET}")
+        except Exception as e:
+            print(f"  {C.RED}Upload failed: {e}{C.RESET}")
+        print()
 
     print(f"{C.BOLD}{C.CYAN}Done! Open the HTML report in a browser for the full breakdown.{C.RESET}")
 

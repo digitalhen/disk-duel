@@ -11,21 +11,22 @@ Public leaderboard for Disk Duel benchmark runs. Sister project to the [`disk_du
 - Python 3.11, FastAPI, SQLAlchemy 2 (sync), psycopg 3 binary
 - Jinja2 server-rendered templates; Chart.js for run comparison charts (CDN, no build step)
 - Alembic for schema migrations
-- Postgres on the shared instance (`192.168.200.50:5432`)
+- Postgres on the shared instance (`$DB_HOST:5432`)
 
 ## Database setup
 
-The shared Postgres instance ([reference_shared_postgres.md](https://github.com/digitalhen/...) — internal note) hosts a project-scoped DB.
+Connect to whatever Postgres instance you want to host the project-scoped DB.
 
 1. As the `postgres` superuser, create the role + database:
 
    ```bash
    # Edit web/sql/01_bootstrap.sql, replace __REPLACE_ME__ with a strong password
-   PGPASSWORD='<superuser-pw>' psql -h 192.168.200.50 -U postgres -f web/sql/01_bootstrap.sql
+   export DB_HOST=<your-pg-host>
+   PGPASSWORD='<superuser-pw>' psql -h "$DB_HOST" -U postgres -f web/sql/01_bootstrap.sql
    ```
 
 2. Create `web/.env` from `web/.env.example` and fill in:
-   - `DATABASE_URL` — e.g. `postgresql+psycopg://diskduel:<pw>@192.168.200.50:5432/diskduel`
+   - `DATABASE_URL` — e.g. `postgresql+psycopg://diskduel:<pw>@$DB_HOST:5432/diskduel`
    - `DISK_DUEL_API_KEY` — `openssl rand -hex 32`
    - `HASHIDS_SALT` — `openssl rand -hex 16`. **Changing this invalidates every existing public URL.**
    - `ROOT_PATH` — `/diskduel` in production, empty for local
@@ -57,12 +58,17 @@ docker compose up --build
 ## Submit a run from the script
 
 ```bash
-export DISK_DUEL_API_KEY=<the value from .env>
 export DISK_DUEL_UPLOAD_URL=http://localhost:8000/api/v1/runs/   # for local dev
 python3 ../disk_duel.py --upload
 ```
 
-In production the script defaults to `https://apps.cleartextlabs.com/disk-duel/api/v1/runs/`, so users only need to set the API key.
+The script does a proof-of-work hash before posting (`POW_DIFFICULTY_BITS = 20` by default) which the server verifies. There's no API key on the public submit endpoint — the script is open source so an embedded key would be theater. Spam protection is layered:
+
+1. **Per-IP token bucket** in-process (`ip_limit_per_minute`, default 30/min)
+2. **Per-`serial_hash` cooldown** in DB (`serial_cooldown_seconds`, default 60s)
+3. **PoW verify** — `sha256("disk-duel:v1:{serial}:{timestamp}:{nonce}")` must have N leading zero bits
+
+`DISK_DUEL_API_KEY` is reserved for future admin endpoints (delete a run, ban a serial, etc.) and isn't checked on the public submit path.
 
 ## Deployment
 

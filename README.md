@@ -25,9 +25,10 @@ If you'd rather skip the menu and pass paths directly, append them — `python3 
 The site at [apps.cleartextlabs.com/disk-duel](https://apps.cleartextlabs.com/disk-duel/) collects runs from anyone running the script. To submit yours:
 
 ```bash
-export DISK_DUEL_API_KEY=<ask-henry>
 python3 /tmp/disk_duel.py --upload
 ```
+
+No API key required. The script does a small proof-of-work (~1–2 s on a recent laptop) before submitting; that, plus per-machine and per-IP rate limits on the server, is the spam protection.
 
 On success the script prints stable public URLs for your run and your machine. The serial number is sha256'd before storage and never displayed; URLs use opaque hashids.
 

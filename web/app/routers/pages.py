@@ -70,8 +70,44 @@ def _leaderboard(db: Session, test_name: str, direction: str, limit: int = 10) -
     return [dict(row._mapping) for row in db.execute(stmt)]
 
 
+def _browse_data(
+    db: Session,
+    chip: str | None, model: str | None, enclosure: str | None, internal: str | None,
+) -> dict:
+    stmt = select(Drive, Machine).join(Machine, Drive.machine_id == Machine.id)
+    if chip:
+        stmt = stmt.where(Machine.chip_type == chip)
+    if model:
+        stmt = stmt.where(Machine.machine_model == model)
+    if enclosure:
+        stmt = stmt.where(Drive.enclosure_name == enclosure)
+    if internal == "yes":
+        stmt = stmt.where(Drive.internal.is_(True))
+    elif internal == "no":
+        stmt = stmt.where(Drive.internal.is_(False))
+    stmt = stmt.order_by(Machine.machine_model, Drive.media_name)
+    rows = db.execute(stmt).all()
+
+    chips = sorted({c for c, in db.execute(select(distinct(Machine.chip_type))) if c})
+    models = sorted({m for m, in db.execute(select(distinct(Machine.machine_model))) if m})
+    enclosures = sorted({e for e, in db.execute(select(distinct(Drive.enclosure_name))) if e})
+
+    return {
+        "rows": rows,
+        "chips": chips, "models": models, "enclosures": enclosures,
+        "filters": {"chip": chip, "model": model, "enclosure": enclosure, "internal": internal},
+    }
+
+
 @router.get("/", response_class=HTMLResponse)
-def home(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+def home(
+    request: Request,
+    chip: str | None = None,
+    model: str | None = None,
+    enclosure: str | None = None,
+    internal: str | None = None,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
     boards = []
     for name, label, direction in LEADERBOARDS:
         boards.append({
@@ -95,7 +131,10 @@ def home(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
 
     return templates.TemplateResponse(
         request, "home.html",
-        {"boards": boards, "recent": recent, "counts": counts},
+        {
+            "boards": boards, "recent": recent, "counts": counts,
+            **_browse_data(db, chip, model, enclosure, internal),
+        },
     )
 
 
@@ -151,47 +190,6 @@ def run_detail(slug: str, request: Request, db: Session = Depends(get_db)) -> HT
     return templates.TemplateResponse(
         request, "run.html",
         {"run": r, "tests": ordered},
-    )
-
-
-@router.get("/browse/", response_class=HTMLResponse)
-def browse(
-    request: Request,
-    chip: str | None = None,
-    model: str | None = None,
-    enclosure: str | None = None,
-    internal: str | None = None,
-    db: Session = Depends(get_db),
-) -> HTMLResponse:
-    stmt = (
-        select(Drive, Machine)
-        .join(Machine, Drive.machine_id == Machine.id)
-    )
-    if chip:
-        stmt = stmt.where(Machine.chip_type == chip)
-    if model:
-        stmt = stmt.where(Machine.machine_model == model)
-    if enclosure:
-        stmt = stmt.where(Drive.enclosure_name == enclosure)
-    if internal == "yes":
-        stmt = stmt.where(Drive.internal.is_(True))
-    elif internal == "no":
-        stmt = stmt.where(Drive.internal.is_(False))
-    stmt = stmt.order_by(Machine.machine_model, Drive.media_name)
-
-    rows = db.execute(stmt).all()
-
-    chips = sorted({c for c, in db.execute(select(distinct(Machine.chip_type))) if c})
-    models = sorted({m for m, in db.execute(select(distinct(Machine.machine_model))) if m})
-    enclosures = sorted({e for e, in db.execute(select(distinct(Drive.enclosure_name))) if e})
-
-    return templates.TemplateResponse(
-        request, "browse.html",
-        {
-            "rows": rows,
-            "chips": chips, "models": models, "enclosures": enclosures,
-            "filters": {"chip": chip, "model": model, "enclosure": enclosure, "internal": internal},
-        },
     )
 
 

@@ -1,4 +1,4 @@
--- One-time bootstrap on the shared Postgres at 192.168.200.50.
+-- One-time bootstrap on the target Postgres instance.
 -- Run as the `postgres` superuser.
 -- The actual schema is managed by Alembic (see alembic/versions/).
 

@@ -71,6 +71,11 @@ class RunIn(BaseModel):
     all_results: list[TestResultIn]
     results: list[dict[str, Any]] = Field(default_factory=list)
 
+    # Proof-of-work: required on the public submit endpoint.
+    pow_nonce: int | None = None
+    pow_difficulty: int | None = None
+    pow_version: str | None = None
+
 
 class RunOut(BaseModel):
     run_slug: str

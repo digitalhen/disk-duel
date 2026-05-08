@@ -1,8 +1,11 @@
 """POST /api/v1/runs/ — accepts the script's JSON payload."""
-from datetime import datetime
-from urllib.parse import urljoin
+import hashlib
+import threading
+import time
+from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status  # noqa: F401
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,7 +18,99 @@ from app.slugs import hash_serial, machine_slug, run_slug
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
 
+# --- Anti-spam ---------------------------------------------------------------
+# Three layers, ordered cheapest-first so an attacker pays the most expensive
+# check (PoW) only after passing the free ones:
+#   1. Per-IP token bucket (in-memory, free)
+#   2. Per-serial_hash cooldown (one DB query)
+#   3. Proof-of-work verify (one sha256)
+# Cluster-wide IP limits should be added at the proxy/CDN layer too.
+
+_ip_lock = threading.Lock()
+_ip_buckets: dict[str, deque[float]] = defaultdict(deque)
+
+
+def _has_leading_zero_bits(digest: bytes, bits: int) -> bool:
+    full, partial = divmod(bits, 8)
+    if any(b for b in digest[:full]):
+        return False
+    if partial == 0:
+        return True
+    return (digest[full] >> (8 - partial)) == 0
+
+
+def _verify_pow(payload: RunIn) -> None:
+    if payload.pow_nonce is None:
+        raise HTTPException(400, detail="missing pow_nonce")
+    if payload.pow_version != "v1":
+        raise HTTPException(400, detail="unsupported pow_version")
+    difficulty = settings.pow_difficulty_bits
+    if (payload.pow_difficulty or 0) < difficulty:
+        raise HTTPException(400, detail=f"pow_difficulty must be >= {difficulty}")
+
+    # Freshness: payload.timestamp must be within ±5 minutes of server time,
+    # otherwise a captured payload + valid PoW could be replayed forever.
+    try:
+        ts = datetime.fromisoformat(payload.timestamp)
+    except ValueError:
+        raise HTTPException(400, detail="invalid timestamp")
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if abs((now - ts).total_seconds()) > 300:
+        raise HTTPException(400, detail="timestamp not fresh (must be within 5 min)")
+
+    serial = (payload.host.serial_number or "").strip()
+    challenge = f"disk-duel:v1:{serial}:{payload.timestamp}:{payload.pow_nonce}"
+    digest = hashlib.sha256(challenge.encode()).digest()
+    if not _has_leading_zero_bits(digest, difficulty):
+        raise HTTPException(400, detail="invalid proof of work")
+
+
+def _check_ip_rate_limit(ip: str) -> None:
+    now = time.monotonic()
+    cutoff = now - 60.0
+    with _ip_lock:
+        bucket = _ip_buckets[ip]
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= settings.ip_limit_per_minute:
+            retry = int(60 - (now - bucket[0])) + 1
+            raise HTTPException(
+                status_code=429,
+                detail="rate limited",
+                headers={"Retry-After": str(retry)},
+            )
+        bucket.append(now)
+
+
+def _check_serial_cooldown(db: Session, serial_hash: str) -> None:
+    cooldown = settings.serial_cooldown_seconds
+    if cooldown <= 0:
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=cooldown)
+    machine = db.scalar(select(Machine).where(Machine.serial_hash == serial_hash))
+    if machine is None:
+        return
+    last = db.scalar(
+        select(Run.ts).where(Run.machine_id == machine.id).order_by(Run.ts.desc()).limit(1)
+    )
+    if last and last > cutoff:
+        wait = int((last + timedelta(seconds=cooldown) - datetime.now(timezone.utc)).total_seconds()) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"machine on cooldown ({wait}s)",
+            headers={"Retry-After": str(max(wait, 1))},
+        )
+
+
 def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
+    """Reserved for future admin-only endpoints (delete a run, ban a serial,
+    etc.). The public submit endpoint is intentionally unauthenticated:
+    the script is open source so embedded keys provide no real protection,
+    and we'd rather control abuse via proxy-level rate limiting + payload
+    sanity bounds than ship security theater. Keep this here so admin
+    endpoints can `Depends(require_api_key)` when added."""
     if not x_api_key or x_api_key != settings.disk_duel_api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
 
@@ -136,9 +231,16 @@ def _insert_test_results(
 @router.post("/runs/", response_model=RunOut, status_code=status.HTTP_201_CREATED)
 def submit_run(
     payload: RunIn,
-    _: None = Depends(require_api_key),
+    request: Request,
     db: Session = Depends(get_db),
 ) -> RunOut:
+    # Cheapest checks first, so a flooder pays most for the rejection.
+    client_ip = request.client.host if request.client else "unknown"
+    _check_ip_rate_limit(client_ip)
+    serial_hash = hash_serial(payload.host.serial_number)
+    _check_serial_cooldown(db, serial_hash)
+    _verify_pow(payload)
+
     machine = _upsert_machine(db, payload)
     drives = _resolve_drives(db, machine, payload)
 
@@ -156,11 +258,13 @@ def submit_run(
     if drive_a is None:
         raise HTTPException(status_code=400, detail=f"label {a!r} has no drive entry")
 
+    # Use server-side time, not client-supplied. Client clock is in
+    # raw_payload if anyone wants it, but cooldown + ordering rely on this.
     run = Run(
         machine_id=machine.id,
         slug="",
         mode=payload.mode,
-        ts=datetime.fromisoformat(payload.timestamp),
+        ts=datetime.now(timezone.utc),
         drive_a_id=drive_a.id,
         drive_b_id=drive_b.id if drive_b else None,
         label_a=a,

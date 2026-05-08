@@ -37,6 +37,71 @@
     </div>
 </section>
 
+<section id="drives">
+    <h2>All drives</h2>
+    <p class="muted">Filter by hardware. Click any row to see that machine's runs.</p>
+    <form class="filters" method="get" action="#drives">
+        <label>Chip
+            <select name="chip">
+                <option value="">any</option>
+                {% for c in chips %}<option value="{{ c }}" {% if filters.chip == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+            </select>
+        </label>
+        <label>Model
+            <select name="model">
+                <option value="">any</option>
+                {% for m in models %}<option value="{{ m }}" {% if filters.model == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+            </select>
+        </label>
+        <label>Enclosure
+            <select name="enclosure">
+                <option value="">any</option>
+                {% for e in enclosures %}<option value="{{ e }}" {% if filters.enclosure == e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+            </select>
+        </label>
+        <label>Internal
+            <select name="internal">
+                <option value="">any</option>
+                <option value="yes" {% if filters.internal == 'yes' %}selected{% endif %}>internal only</option>
+                <option value="no" {% if filters.internal == 'no' %}selected{% endif %}>external only</option>
+            </select>
+        </label>
+        <button type="submit">Apply</button>
+        <a href="{{ request.url_for('home') }}#drives">reset</a>
+    </form>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Machine</th>
+                <th>Chip</th>
+                <th>Drive</th>
+                <th>Bus</th>
+                <th>Internal</th>
+                <th>Size</th>
+                <th>Enclosure</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for drive, machine in rows %}
+            <tr>
+                <td><a href="{{ request.url_for('machine', slug=machine.slug) }}">{{ machine.machine_model or machine.machine_name or 'unknown' }}</a></td>
+                <td>{{ machine.chip_type or '—' }}</td>
+                <td>{{ drive.media_name }}</td>
+                <td>{{ drive.bus_protocol or '—' }}</td>
+                <td>{{ 'yes' if drive.internal else 'no' }}</td>
+                <td>{{ '%.0f GB' | format(drive.size_gb) if drive.size_gb else '—' }}</td>
+                <td>{{ drive.enclosure_name or '—' }}</td>
+                <td><a href="{{ request.url_for('machine', slug=machine.slug) }}">view →</a></td>
+            </tr>
+        {% else %}
+            <tr><td colspan="8" class="empty">No drives match the current filters.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+
 {% if recent %}
 <section class="recent">
     <h2>Recent runs</h2>
