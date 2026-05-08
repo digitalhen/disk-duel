@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}Disk Duel{% endblock %}</title>
+<link rel="stylesheet" href="{{ request.url_for('static', path='styles.css') }}">
+{% block head %}{% endblock %}
+</head>
+<body>
+<header>
+    <div class="container">
+        <a class="brand" href="{{ request.url_for('home') }}">Disk Duel</a>
+        <nav>
+            <a href="{{ request.url_for('home') }}">Leaderboards</a>
+            <a href="{{ request.url_for('browse') }}">Browse</a>
+            <a href="{{ request.url_for('about') }}">How to run</a>
+            <a href="https://github.com/digitalhen/disk-duel" target="_blank" rel="noopener">GitHub</a>
+        </nav>
+    </div>
+</header>
+<main class="container">
+{% block content %}{% endblock %}
+</main>
+<footer>
+    <div class="container">
+        Public benchmarks of real drives, posted by the <a href="https://github.com/digitalhen/disk-duel">disk-duel</a> script.
+        Serial numbers are hashed and never displayed.
+    </div>
+</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>

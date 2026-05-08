@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}How to run · Disk Duel{% endblock %}
+{% block content %}
+<section>
+    <h1>How to publish your benchmark</h1>
+
+    <p>The <a href="https://github.com/digitalhen/disk-duel">disk-duel</a> script runs a 19-test <code>fio</code>-based suite on one or two drives, generates a local HTML report, and (optionally) uploads the results here.</p>
+
+    <h2>1. Run the script</h2>
+    <pre><code>curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py &amp;&amp; python3 /tmp/disk_duel.py</code></pre>
+    <p>The interactive menu auto-detects your drives. Pick one for a solo run, two to compare. Make sure <code>fio</code> is installed (<code>brew install fio</code> on macOS).</p>
+
+    <h2>2. Get an upload key</h2>
+    <p>The API requires a shared key in the <code>X-API-Key</code> header. Ask Henry for the current value, then export it:</p>
+    <pre><code>export DISK_DUEL_API_KEY=&lt;your-key&gt;</code></pre>
+
+    <h2>3. Upload</h2>
+    <p>Pass <code>--upload</code> when running the script:</p>
+    <pre><code>python3 /tmp/disk_duel.py --upload</code></pre>
+    <p>On success the script prints the public URLs for the run and the machine. Both URLs are stable, opaque slugs — your hardware serial is hashed before storage and is never displayed publicly.</p>
+
+    <h2>What's stored</h2>
+    <ul>
+        <li><strong>Hardware:</strong> machine model, chip, RAM (no serial number).</li>
+        <li><strong>Drive:</strong> media name (e.g. <em>WD_BLACK SN850X 4000GB</em>), bus protocol, internal/external flag, size, enclosure if external.</li>
+        <li><strong>Per test:</strong> the primary metric (MB/s, IOPS, or p99 latency µs) plus all the bandwidth/IOPS/latency breakdowns <code>fio</code> emits.</li>
+        <li><strong>Raw payload:</strong> the full JSON that the script wrote alongside the local HTML report, kept for future re-rendering.</li>
+    </ul>
+</section>
+{% endblock %}

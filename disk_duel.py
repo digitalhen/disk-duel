@@ -1167,14 +1167,14 @@ def _detect_enclosures() -> dict:
     if len(ext_bsds) == len(enclosures):
         pairs = zip(ext_bsds, enclosures)
     elif len(enclosures) == 1:
-        # One enclosure, multiple drives (e.g. multi-bay box) — share it.
+        # One enclosure, multiple drives (e.g. multi-bay box) -- share it.
         pairs = ((b, enclosures[0]) for b in ext_bsds)
     else:
         # Ambiguous: don't guess.
         return result
 
     for bsd, enc in pairs:
-        result[bsd] = f"{enc['name']} ({enc['vendor']})"
+        result[bsd] = {"name": enc["name"], "vendor": enc["vendor"]}
     return result
 
 
@@ -1275,7 +1275,8 @@ def detect_drives() -> list:
             "free_gb": free / (1024**3),
             "size_gb": size / (1024**3),
             "writable": bool(writable),
-            "enclosure": enclosures.get(phys_disk),
+            "enclosure_name": (enclosures.get(phys_disk) or {}).get("name"),
+            "enclosure_vendor": (enclosures.get(phys_disk) or {}).get("vendor"),
             "device": phys_disk,
         })
 
@@ -1337,8 +1338,11 @@ def pick_drives_interactive(drives: list) -> tuple:
             head += f" {C.DIM}(read-only){C.RESET}"
         print(f"  {marker} {head}")
         print(f"      {C.DIM}{media} · {loc} {ssd} · {bus} · {free_str}{C.RESET}")
-        if d.get("enclosure"):
-            print(f"      {C.DIM}Enclosure: {d['enclosure']}{C.RESET}")
+        if d.get("enclosure_name"):
+            enc = d["enclosure_name"]
+            if d.get("enclosure_vendor"):
+                enc += f" ({d['enclosure_vendor']})"
+            print(f"      {C.DIM}Enclosure: {enc}{C.RESET}")
         print(f"      {C.DIM}Mount: {d['mount']}{C.RESET}")
         print()
 
@@ -1522,6 +1526,76 @@ def generate_html_report_solo(
 
 
 # ---------------------------------------------------------------------------
+# Upload to public leaderboard
+# ---------------------------------------------------------------------------
+SCRIPT_VERSION = "0.2.0"
+DEFAULT_UPLOAD_URL = "https://apps.cleartextlabs.com/diskduel/api/v1/runs/"
+
+
+def _drive_for_path(path: str, drives: list | None = None) -> dict | None:
+    """Return the detected-drive dict whose mount is the longest prefix
+    of `path`. Falls back to a fresh detect_drives() if not supplied."""
+    if drives is None:
+        drives = detect_drives()
+    real = os.path.realpath(path)
+    best = None
+    best_len = -1
+    for d in drives:
+        m = os.path.realpath(d["mount"])
+        # `/` mount is shorter than any other and matches everything; only
+        # accept it if no more specific mount matches.
+        if real == m or real.startswith(m.rstrip("/") + "/"):
+            if len(m) > best_len:
+                best = d
+                best_len = len(m)
+    return best
+
+
+def _payload_drive(label: str, path: str, meta: dict | None) -> dict:
+    """Shape a detected-drive dict into the structure the API expects."""
+    if meta is None:
+        return {"label": label, "path": path, "media_name": label}
+    return {
+        "label": label,
+        "path": path,
+        "device": meta.get("device"),
+        "media_name": meta.get("media_name") or label,
+        "bus_protocol": meta.get("bus_protocol"),
+        "internal": bool(meta.get("internal")),
+        "solid_state": bool(meta.get("solid_state", True)),
+        "size_gb": meta.get("size_gb"),
+        "enclosure_name": meta.get("enclosure_name"),
+        "enclosure_vendor": meta.get("enclosure_vendor"),
+    }
+
+
+def upload_results(payload: dict, *, url: str, api_key: str, timeout: int = 30) -> dict:
+    """POST the payload to the leaderboard. Returns the parsed JSON response."""
+    import urllib.request
+    import urllib.error
+
+    body = json.dumps(payload, default=str).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-API-Key": api_key,
+            "User-Agent": f"disk-duel/{SCRIPT_VERSION}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"upload failed ({e.code}): {detail[:300]}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"upload failed: {e.reason}") from e
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -1544,6 +1618,15 @@ def main():
     parser.add_argument(
         "--non-interactive", action="store_true",
         help="Disable the drive menu (requires path_a to be provided)"
+    )
+    upload_group = parser.add_mutually_exclusive_group()
+    upload_group.add_argument(
+        "--upload", action="store_true",
+        help="Submit the result to the public leaderboard. Requires DISK_DUEL_API_KEY in the environment."
+    )
+    upload_group.add_argument(
+        "--no-upload", action="store_true",
+        help="Do not upload, even if running interactively."
     )
     parser.add_argument(
         "--quick", action="store_true",
@@ -1572,20 +1655,27 @@ def main():
     print()
 
     # Resolve paths + labels: explicit args take precedence, else interactive menu.
+    drive_meta_a: Optional[dict] = None
+    drive_meta_b: Optional[dict] = None
     if args.path_a:
         print(f"{C.BOLD}Validating drives...{C.RESET}")
         path_a = validate_path(args.path_a)
         path_b = validate_path(args.path_b) if args.path_b else None
+        # Best-effort metadata enrichment for upload payloads.
+        all_drives = detect_drives()
+        drive_meta_a = _drive_for_path(path_a, all_drives)
+        drive_meta_b = _drive_for_path(path_b, all_drives) if path_b else None
         if path_b is None:
             label_a = (args.labels[0] if args.labels else None) \
+                or (drive_meta_a or {}).get("volume_name") \
                 or os.path.basename(path_a) or path_a
             label_b = None
         else:
             if args.labels and len(args.labels) >= 2:
                 label_a, label_b = args.labels[0], args.labels[1]
             else:
-                label_a = os.path.basename(path_a) or path_a
-                label_b = os.path.basename(path_b) or path_b
+                label_a = (drive_meta_a or {}).get("volume_name") or os.path.basename(path_a) or path_a
+                label_b = (drive_meta_b or {}).get("volume_name") or os.path.basename(path_b) or path_b
     elif args.non_interactive:
         parser.error("path_a is required when --non-interactive is set")
     else:
@@ -1596,6 +1686,8 @@ def main():
             print(f"  python3 disk_duel.py /path/a [/path/b]")
             sys.exit(1)
         drive_a, drive_b = pick_drives_interactive(drives)
+        drive_meta_a = drive_a
+        drive_meta_b = drive_b
         path_a = writable_test_path(drive_a)
         if path_a is None:
             print(f"{C.RED}No writable test path on {drive_a['volume_name']}.{C.RESET}")
@@ -1767,33 +1859,74 @@ def main():
 
     # Also dump raw JSON results
     json_path = output_path.replace(".html", ".json")
+    payload_drives = [_payload_drive(label_a, path_a, drive_meta_a)]
+    if not solo:
+        payload_drives.append(_payload_drive(label_b, path_b, drive_meta_b))
+
+    if solo:
+        payload = {
+            "timestamp": datetime.now().isoformat(),
+            "mode": "solo",
+            "host": host,
+            "label": labels[0],
+            "path": path_a,
+            "drives": payload_drives,
+            "quick": args.quick,
+            "size_multiplier": args.size_multiplier,
+            "script_version": SCRIPT_VERSION,
+            "results": solo_results,
+            "all_results": all_results,
+        }
+    else:
+        payload = {
+            "timestamp": datetime.now().isoformat(),
+            "mode": "dual",
+            "host": host,
+            "labels": list(labels),
+            "paths": [path_a, path_b],
+            "drives": payload_drives,
+            "quick": args.quick,
+            "size_multiplier": args.size_multiplier,
+            "script_version": SCRIPT_VERSION,
+            "results": scored_results,
+            "all_results": [
+                {k: v for k, v in r.items() if k != "score"}
+                for r in all_results
+            ],
+        }
     with open(json_path, "w") as f:
-        if solo:
-            payload = {
-                "timestamp": datetime.now().isoformat(),
-                "mode": "solo",
-                "host": host,
-                "label": labels[0],
-                "path": path_a,
-                "results": solo_results,
-                "all_results": all_results,
-            }
-        else:
-            payload = {
-                "timestamp": datetime.now().isoformat(),
-                "mode": "dual",
-                "host": host,
-                "labels": labels,
-                "paths": [path_a, path_b],
-                "results": scored_results,
-                "all_results": [
-                    {k: v for k, v in r.items() if k != "score"}
-                    for r in all_results
-                ],
-            }
         json.dump(payload, f, indent=2, default=str)
     print(f"  {C.GREEN}Raw data saved to: {json_path}{C.RESET}")
     print()
+
+    # Optional upload to public leaderboard
+    api_key = os.environ.get("DISK_DUEL_API_KEY", "").strip()
+    upload_url = os.environ.get("DISK_DUEL_UPLOAD_URL", DEFAULT_UPLOAD_URL).strip()
+    should_upload = False
+    if args.upload:
+        should_upload = True
+    elif args.no_upload:
+        should_upload = False
+    elif sys.stdin.isatty() and api_key:
+        try:
+            ans = input(f"{C.BOLD}Upload to public leaderboard?{C.RESET} [y/N]: ").strip().lower()
+            should_upload = ans == "y"
+        except EOFError:
+            should_upload = False
+
+    if should_upload:
+        if not api_key:
+            print(f"  {C.YELLOW}DISK_DUEL_API_KEY not set; skipping upload.{C.RESET}")
+        else:
+            print(f"{C.BOLD}Uploading to {upload_url}...{C.RESET}")
+            try:
+                resp = upload_results(payload, url=upload_url, api_key=api_key)
+                print(f"  {C.GREEN}Run:     {resp.get('run_url')}{C.RESET}")
+                print(f"  {C.GREEN}Machine: {resp.get('machine_url')}{C.RESET}")
+            except Exception as e:
+                print(f"  {C.RED}Upload failed: {e}{C.RESET}")
+            print()
+
     print(f"{C.BOLD}{C.CYAN}Done! Open the HTML report in a browser for the full breakdown.{C.RESET}")
 
 

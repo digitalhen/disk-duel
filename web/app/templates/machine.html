@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ machine.machine_model or machine.machine_name }} · Disk Duel{% endblock %}
+{% block content %}
+<section class="machine-header">
+    <h1>{{ machine.machine_model or machine.machine_name or 'Machine' }}</h1>
+    <div class="kvs">
+        {% if machine.machine_name %}<span><strong>Name:</strong> {{ machine.machine_name }}</span>{% endif %}
+        {% if machine.chip_type %}<span><strong>Chip:</strong> {{ machine.chip_type }}</span>{% endif %}
+        {% if machine.physical_memory %}<span><strong>RAM:</strong> {{ machine.physical_memory }}</span>{% endif %}
+        <span><strong>First seen:</strong> {{ machine.first_seen.strftime('%Y-%m-%d') }}</span>
+    </div>
+</section>
+
+<section>
+    <h2>Drives ({{ machine.drives | length }})</h2>
+    <table>
+        <thead>
+            <tr><th>Media</th><th>Bus</th><th>Internal</th><th>Size</th><th>Enclosure</th></tr>
+        </thead>
+        <tbody>
+        {% for d in machine.drives %}
+            <tr>
+                <td><strong>{{ d.media_name }}</strong></td>
+                <td>{{ d.bus_protocol or '—' }}</td>
+                <td>{{ 'Yes' if d.internal else 'No' }}</td>
+                <td>{{ '%.0f GB' | format(d.size_gb) if d.size_gb else '—' }}</td>
+                <td>{% if d.enclosure_name %}{{ d.enclosure_name }}{% if d.enclosure_vendor %} <span class="muted">({{ d.enclosure_vendor }})</span>{% endif %}{% else %}—{% endif %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section>
+    <h2>Runs ({{ runs | length }})</h2>
+    <table>
+        <thead><tr><th>Date</th><th>Mode</th><th>Drives</th><th></th></tr></thead>
+        <tbody>
+        {% for r in runs %}
+            <tr>
+                <td>{{ r.ts.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td>{{ r.mode }}</td>
+                <td>{{ r.label_a }}{% if r.label_b %} vs {{ r.label_b }}{% endif %}</td>
+                <td><a href="{{ request.url_for('run_detail', slug=r.slug) }}">view →</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

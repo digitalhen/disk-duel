@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+    <h1>Real-world drive benchmarks.</h1>
+    <p>Crowdsourced <code>fio</code> results from real machines. {{ counts.machines }} machines · {{ counts.drives }} unique drives · {{ counts.runs }} runs.</p>
+    <pre class="cta"><code>curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py &amp;&amp; python3 /tmp/disk_duel.py</code></pre>
+    <p class="muted">Set <code>DISK_DUEL_API_KEY</code> and pass <code>--upload</code> to publish your results here. <a href="{{ request.url_for('about') }}">More info →</a></p>
+</section>
+
+<section class="boards">
+    <h2>Top 10 leaderboards <small>(latest run per machine)</small></h2>
+    <div class="board-grid">
+    {% for board in boards %}
+        <div class="board">
+            <h3>{{ board.test_name }}</h3>
+            <p class="muted">{{ board.unit_label }}</p>
+            <ol class="leaderboard">
+            {% for row in board.rows %}
+                <li>
+                    <a href="{{ request.url_for('run_detail', slug=row.run_slug) }}">
+                        <span class="value">{{ '%.0f' | format(row.primary_value) if row.primary_unit == 'IOPS' else '%.1f' | format(row.primary_value) }}</span>
+                        <span class="unit">{{ row.primary_unit }}</span>
+                    </a>
+                    <div class="meta">
+                        <strong>{{ row.media_name }}</strong>
+                        {% if row.enclosure_name %}<span class="muted">in {{ row.enclosure_name }}</span>{% endif %}
+                        <br>
+                        <span class="muted">{{ row.machine_model or row.machine_name or '—' }} · {{ row.chip_type or '' }}{% if row.internal %} · internal{% endif %}</span>
+                    </div>
+                </li>
+            {% else %}
+                <li class="empty">No results yet.</li>
+            {% endfor %}
+            </ol>
+        </div>
+    {% endfor %}
+    </div>
+</section>
+
+{% if recent %}
+<section class="recent">
+    <h2>Recent runs</h2>
+    <table>
+        <thead><tr><th>When</th><th>Machine</th><th>Mode</th><th></th></tr></thead>
+        <tbody>
+        {% for run, machine in recent %}
+            <tr>
+                <td>{{ run.ts.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td><a href="{{ request.url_for('machine', slug=machine.slug) }}">{{ machine.machine_model or machine.machine_name or 'unknown' }}</a></td>
+                <td>{{ run.mode }}</td>
+                <td><a href="{{ request.url_for('run_detail', slug=run.slug) }}">view →</a></td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+{% endblock %}

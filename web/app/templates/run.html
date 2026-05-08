@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Run · Disk Duel{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+{% endblock %}
+{% block content %}
+<section class="run-header">
+    <h1>{{ run.label_a }}{% if run.label_b %} <span class="muted">vs</span> {{ run.label_b }}{% endif %}</h1>
+    <div class="kvs">
+        <span><strong>Machine:</strong> <a href="{{ request.url_for('machine', slug=run.machine.slug) }}">{{ run.machine.machine_model or run.machine.machine_name or 'unknown' }}</a></span>
+        <span><strong>Mode:</strong> {{ run.mode }}</span>
+        <span><strong>Date:</strong> {{ run.ts.strftime('%Y-%m-%d %H:%M') }}</span>
+        {% if run.quick %}<span class="badge">quick</span>{% endif %}
+    </div>
+
+    <div class="run-drives">
+        <div class="drive-card">
+            <h3>{{ run.label_a }}</h3>
+            <p>{{ run.drive_a.media_name }}</p>
+            <p class="muted">{{ run.drive_a.bus_protocol or '' }}{% if run.drive_a.enclosure_name %} · {{ run.drive_a.enclosure_name }}{% endif %}</p>
+        </div>
+        {% if run.drive_b %}
+        <div class="drive-card alt">
+            <h3>{{ run.label_b }}</h3>
+            <p>{{ run.drive_b.media_name }}</p>
+            <p class="muted">{{ run.drive_b.bus_protocol or '' }}{% if run.drive_b.enclosure_name %} · {{ run.drive_b.enclosure_name }}{% endif %}</p>
+        </div>
+        {% endif %}
+    </div>
+</section>
+
+{% if run.mode == 'dual' %}
+<section>
+    <h2>Comparison chart</h2>
+    <canvas id="chart" height="120"></canvas>
+</section>
+{% endif %}
+
+<section>
+    <h2>Results</h2>
+    <table class="results">
+        <thead>
+            <tr>
+                <th>Test</th>
+                <th>{{ run.label_a }}</th>
+                {% if run.drive_b %}<th>{{ run.label_b }}</th><th>Δ</th>{% endif %}
+                <th>Unit</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for name, group in tests %}
+            {% set a = group.get('a') %}
+            {% set b = group.get('b') %}
+            <tr>
+                <td>{{ name }}</td>
+                <td>{% if a %}{{ '%.0f' | format(a.primary_value) if a.primary_unit == 'IOPS' else '%.1f' | format(a.primary_value) }}{% endif %}</td>
+                {% if run.drive_b %}
+                    <td>{% if b %}{{ '%.0f' | format(b.primary_value) if b.primary_unit == 'IOPS' else '%.1f' | format(b.primary_value) }}{% endif %}</td>
+                    <td>
+                        {% if a and b and a.primary_value and b.primary_value %}
+                            {% set lower_better = 'Latency' in name %}
+                            {% if lower_better %}
+                                {% if a.primary_value < b.primary_value %}
+                                    <span class="winner">A −{{ '%.0f'|format((b.primary_value-a.primary_value)/b.primary_value*100) }}%</span>
+                                {% else %}
+                                    <span class="winner alt">B −{{ '%.0f'|format((a.primary_value-b.primary_value)/a.primary_value*100) }}%</span>
+                                {% endif %}
+                            {% else %}
+                                {% if a.primary_value > b.primary_value %}
+                                    <span class="winner">A +{{ '%.0f'|format((a.primary_value-b.primary_value)/b.primary_value*100) }}%</span>
+                                {% else %}
+                                    <span class="winner alt">B +{{ '%.0f'|format((b.primary_value-a.primary_value)/a.primary_value*100) }}%</span>
+                                {% endif %}
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                {% endif %}
+                <td class="muted">{{ (a or b).primary_unit if (a or b) else '' }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}
+
+{% block scripts %}
+{% if run.mode == 'dual' %}
+<script id="chart-data" type="application/json">
+{
+  "label_a": {{ run.label_a | tojson }},
+  "label_b": {{ run.label_b | tojson }},
+  "tests": [
+    {% for name, group in tests %}
+        {% set a = group.get('a') %}
+        {% set b = group.get('b') %}
+        {
+          "name": {{ name | tojson }},
+          "a": {% if a and a.primary_value %}{{ a.primary_value }}{% else %}null{% endif %},
+          "b": {% if b and b.primary_value %}{{ b.primary_value }}{% else %}null{% endif %},
+          "unit": {{ ((a or b).primary_unit if (a or b) else '') | tojson }}
+        }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ]
+}
+</script>
+<script src="{{ request.url_for('static', path='charts.js') }}"></script>
+{% endif %}
+{% endblock %}

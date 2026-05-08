@@ -2,6 +2,8 @@
 
 Comprehensive `fio`-based drive benchmark with a scored HTML report. Compare two drives head-to-head, or benchmark a single drive on its own. Includes an interactive drive picker with auto-detection of host hardware and mounted drives on macOS.
 
+Optionally publish your results to the public leaderboard at **[apps.cleartextlabs.com/diskduel](https://apps.cleartextlabs.com/diskduel/)** with `--upload`. Serials are hashed before storage and never displayed.
+
 The benchmark suite covers sequential throughput, random 4K IOPS at QD1/4/16/32, large-block random, mixed read/write, sustained sequential write, and QD1 latency — 19 tests total.
 
 ## Quick start
@@ -17,6 +19,19 @@ The HTML/JSON report lands in your current directory. Make sure `fio` is install
 > Why download-then-run instead of `curl … | python3 -`? The interactive menu reads from stdin, which the pipe would have already consumed.
 
 If you'd rather skip the menu and pass paths directly, append them — `python3 /tmp/disk_duel.py /Volumes/A /Volumes/B` (dual) or `python3 /tmp/disk_duel.py /Volumes/A` (solo).
+
+## Publishing to the leaderboard
+
+The site at [apps.cleartextlabs.com/diskduel](https://apps.cleartextlabs.com/diskduel/) collects runs from anyone running the script. To submit yours:
+
+```bash
+export DISK_DUEL_API_KEY=<ask-henry>
+python3 /tmp/disk_duel.py --upload
+```
+
+On success the script prints stable public URLs for your run and your machine. The serial number is sha256'd before storage and never displayed; URLs use opaque hashids.
+
+The web app lives in [`web/`](./web/) — see [web/README.md](./web/README.md) for deployment.
 
 ## What the interactive menu does
 
