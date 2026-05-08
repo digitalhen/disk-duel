@@ -1,8 +1,25 @@
 # Disk Duel
 
-Comprehensive `fio`-based drive benchmark with a scored HTML report. Compare two drives head-to-head, or benchmark a single drive on its own.
+Comprehensive `fio`-based drive benchmark with a scored HTML report. Compare two drives head-to-head, or benchmark a single drive on its own. Includes an interactive drive picker with auto-detection of host hardware and mounted drives on macOS.
 
 The benchmark suite covers sequential throughput, random 4K IOPS at QD1/4/16/32, large-block random, mixed read/write, sustained sequential write, and QD1 latency — 19 tests total.
+
+## Interactive mode (recommended on macOS)
+
+Run with no positional arguments to get a menu of detected drives:
+
+```bash
+python3 disk_duel.py
+```
+
+The script will:
+
+1. **Identify the host** — model, chip, RAM, and serial number (via `system_profiler SPHardwareDataType`). The serial is included in the JSON output so reports from different machines can be told apart.
+2. **List local physical drives** — by walking `/` and `/Volumes/*`, calling `diskutil info -plist` on each, and collapsing volumes that share a parent disk. Network shares (SMB/NFS/AFP) and APFS snapshots are filtered out. For each drive you see: volume name, media name (e.g. `WD_BLACK SN850X 4000GB`), Internal vs External, bus protocol (Apple Fabric / PCI-Express / USB / Thunderbolt), and free/total space.
+3. **Ask for the first drive**, then **optionally a second** (enter `0` for solo mode).
+4. **Auto-pick a writable test directory** on each chosen drive — `~` for the boot volume (since `/` is read-only on Apple Silicon), the mount point otherwise. If the chosen drive isn't writable, the script offers to `sudo mkdir`+`chown` a scratch directory on it.
+
+Add `--non-interactive` to disable the menu and require explicit paths (useful for scripting/CI).
 
 ## Requirements
 

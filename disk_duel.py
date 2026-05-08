@@ -1038,6 +1038,294 @@ def validate_path(path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Host & drive detection (macOS-focused; degrades gracefully elsewhere)
+# ---------------------------------------------------------------------------
+def get_host_info() -> dict:
+    """Return identifying info for this host."""
+    info = {
+        "platform": sys.platform,
+        "hostname": None,
+        "machine_name": None,
+        "machine_model": None,
+        "chip_type": None,
+        "physical_memory": None,
+        "serial_number": None,
+        "platform_uuid": None,
+    }
+    try:
+        info["hostname"] = subprocess.check_output(["hostname"], text=True).strip()
+    except Exception:
+        pass
+
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.check_output(
+                ["system_profiler", "SPHardwareDataType", "-json"],
+                text=True, timeout=10,
+            )
+            d = json.loads(out)["SPHardwareDataType"][0]
+            info["machine_name"] = d.get("machine_name")
+            info["machine_model"] = d.get("machine_model")
+            info["chip_type"] = d.get("chip_type")
+            info["physical_memory"] = d.get("physical_memory")
+            info["serial_number"] = d.get("serial_number")
+            info["platform_uuid"] = d.get("platform_UUID")
+        except Exception:
+            pass
+
+    return info
+
+
+def host_summary(host: dict) -> str:
+    """One-line summary for display."""
+    bits = []
+    if host.get("machine_name"):
+        m = host["machine_name"]
+        if host.get("machine_model"):
+            m += f" ({host['machine_model']})"
+        bits.append(m)
+    if host.get("chip_type"):
+        bits.append(host["chip_type"])
+    if host.get("physical_memory"):
+        bits.append(f"{host['physical_memory']} RAM")
+    if host.get("serial_number"):
+        bits.append(f"Serial {host['serial_number']}")
+    elif host.get("hostname"):
+        bits.append(host["hostname"])
+    return " · ".join(bits) if bits else "(unknown host)"
+
+
+def _diskutil_info(target: str) -> dict:
+    """Return diskutil info for a path/device as a dict, or {} on failure."""
+    if sys.platform != "darwin":
+        return {}
+    try:
+        import plistlib
+        out = subprocess.check_output(
+            ["diskutil", "info", "-plist", target], timeout=10,
+        )
+        return plistlib.loads(out)
+    except Exception:
+        return {}
+
+
+def _detect_enclosures() -> dict:
+    """Best-effort: walk SPThunderboltDataType + SPUSBDataType and return
+    a dict of bsd_name -> 'Enclosure name (Vendor)'. Often empty if the
+    OS doesn't surface a child media node, but worth a try."""
+    enclosures: dict = {}
+    if sys.platform != "darwin":
+        return enclosures
+
+    def walk(items, ancestor=None):
+        for it in items:
+            name = it.get("_name") or ancestor
+            vendor = it.get("manufacturer") or it.get("vendor_name_key") or ""
+            for media in it.get("Media", []) or []:
+                bsd = media.get("bsd_name") or media.get("BSD Name")
+                if bsd:
+                    enclosures[bsd] = f"{name} ({vendor})" if vendor else (name or "")
+            for sub in it.get("_items", []) or []:
+                walk([sub], name)
+
+    for sp_type in ("SPThunderboltDataType", "SPUSBDataType"):
+        try:
+            out = subprocess.check_output(
+                ["system_profiler", sp_type, "-json"],
+                text=True, timeout=10,
+            )
+            data = json.loads(out).get(sp_type, [])
+            walk(data)
+        except Exception:
+            pass
+
+    return enclosures
+
+
+def _is_writable(path: str) -> bool:
+    """Test if we can create+remove a file in this directory."""
+    if not os.path.isdir(path):
+        return False
+    test = os.path.join(path, f".disk_duel_write_test_{os.getpid()}")
+    try:
+        with open(test, "w") as f:
+            f.write("x")
+        os.remove(test)
+        return True
+    except (OSError, PermissionError):
+        return False
+
+
+def detect_drives() -> list:
+    """Return a list of usable physical drives (one entry per parent disk).
+    macOS only — returns [] elsewhere."""
+    if sys.platform != "darwin":
+        return []
+
+    enclosures = _detect_enclosures()
+
+    candidates = ["/"]
+    try:
+        for name in os.listdir("/Volumes"):
+            full = f"/Volumes/{name}"
+            try:
+                if os.path.ismount(full):
+                    candidates.append(full)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+    drives = []
+    seen = set()
+    for path in candidates:
+        info = _diskutil_info(path)
+        if not info:
+            continue
+
+        bus = info.get("BusProtocol", "") or ""
+        if any(x in bus.upper() for x in ("SMB", "AFP", "NFS")):
+            continue
+
+        parent = info.get("ParentWholeDisk", "")
+        if not parent or parent in seen:
+            continue
+        seen.add(parent)
+
+        parent_info = _diskutil_info(parent)
+        media = (parent_info.get("MediaName") or info.get("MediaName") or "").strip()
+        if media.endswith(" Media"):
+            media = media[:-6]
+
+        free = info.get("FreeSpace", 0) or 0
+        size = info.get("Size", 0) or 0
+        # diskutil's FreeSpace is unreliable on APFS containers — use statvfs.
+        try:
+            st = os.statvfs(path)
+            statvfs_free = st.f_bavail * st.f_frsize
+            statvfs_size = st.f_blocks * st.f_frsize
+            if free == 0 or free > statvfs_size:
+                free = statvfs_free
+            if size == 0:
+                size = statvfs_size
+        except OSError:
+            pass
+
+        # On Apple Silicon, / is the read-only sealed system volume but the
+        # data partition behind it (~ etc.) is on the same physical disk, so
+        # test that location for writability instead of the mount point.
+        test_target = os.path.expanduser("~") if path == "/" else path
+        writable = _is_writable(test_target)
+
+        drives.append({
+            "mount": path,
+            "volume_name": info.get("VolumeName") or os.path.basename(path) or path,
+            "media_name": media,
+            "bus_protocol": bus,
+            "internal": bool(info.get("Internal", False)),
+            "solid_state": bool(info.get("SolidState", False)),
+            "free_gb": free / (1024**3),
+            "size_gb": size / (1024**3),
+            "writable": bool(writable),
+            "enclosure": enclosures.get(parent),
+            "device": parent,
+        })
+
+    drives.sort(key=lambda d: (not d["writable"], -d["free_gb"]))
+    return drives
+
+
+def writable_test_path(drive: dict) -> Optional[str]:
+    """Return a writable directory on this drive for fio to use.
+    May prompt for sudo if no writable location is found."""
+    mount = drive["mount"]
+
+    # On Apple Silicon, / is the sealed read-only system volume; use ~.
+    if mount == "/":
+        home = os.path.expanduser("~")
+        if _is_writable(home):
+            return home
+
+    if _is_writable(mount):
+        return mount
+
+    scratch = os.path.join(mount, "disk_duel_scratch")
+    if _is_writable(scratch):
+        return scratch
+
+    # Need elevated permissions to create a writable scratch dir.
+    print(f"  {C.YELLOW}{mount} is not writable as {os.environ.get('USER', 'this user')}.{C.RESET}")
+    try:
+        ans = input(
+            f"  Create writable scratch dir at {scratch} via sudo? [y/N]: "
+        ).strip().lower()
+    except EOFError:
+        return None
+    if ans != "y":
+        return None
+
+    try:
+        subprocess.run(["sudo", "mkdir", "-p", scratch], check=True)
+        subprocess.run(["sudo", "chown", str(os.getuid()), scratch], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"  {C.RED}sudo failed: {e}{C.RESET}")
+        return None
+
+    return scratch if _is_writable(scratch) else None
+
+
+def pick_drives_interactive(drives: list) -> tuple:
+    """Display drive menu, return (drive_a, drive_b_or_None)."""
+    print(f"\n{C.BOLD}{C.CYAN}Detected {len(drives)} drive(s):{C.RESET}\n")
+    for i, d in enumerate(drives, 1):
+        loc = f"{C.BLUE}Internal{C.RESET}" if d["internal"] else f"{C.MAG}External{C.RESET}"
+        ssd = "SSD" if d["solid_state"] else "HDD"
+        bus = d["bus_protocol"] or "?"
+        free_str = f"{d['free_gb']:,.0f} GB free / {d['size_gb']:,.0f} GB"
+        media = d["media_name"] or "(unknown device)"
+        marker = f"{C.GREEN}[{i}]{C.RESET}" if d["writable"] else f"{C.DIM}[{i}]{C.RESET}"
+        head = f"{C.BOLD}{d['volume_name']}{C.RESET}"
+        if not d["writable"]:
+            head += f" {C.DIM}(read-only){C.RESET}"
+        print(f"  {marker} {head}")
+        print(f"      {C.DIM}{media} · {loc} {ssd} · {bus} · {free_str}{C.RESET}")
+        if d.get("enclosure"):
+            print(f"      {C.DIM}Enclosure: {d['enclosure']}{C.RESET}")
+        print(f"      {C.DIM}Mount: {d['mount']}{C.RESET}")
+        print()
+
+    def _ask(prompt: str, *, allow_zero: bool = False) -> int:
+        while True:
+            try:
+                ans = input(f"{C.BOLD}{prompt}: {C.RESET}").strip()
+            except EOFError:
+                sys.exit(1)
+            if not ans:
+                continue
+            if allow_zero and ans == "0":
+                return 0
+            try:
+                idx = int(ans)
+                if 1 <= idx <= len(drives):
+                    return idx
+            except ValueError:
+                pass
+            valid = f"1-{len(drives)}" + (" (or 0 to skip)" if allow_zero else "")
+            print(f"  {C.RED}Enter a number {valid}.{C.RESET}")
+
+    a_idx = _ask("Pick the FIRST drive to benchmark")
+    drive_a = drives[a_idx - 1]
+
+    b_idx = _ask("Pick a SECOND drive for comparison (0 to run solo)", allow_zero=True)
+    drive_b = None if b_idx == 0 else drives[b_idx - 1]
+    if drive_b and drive_b["mount"] == drive_a["mount"]:
+        print(f"  {C.YELLOW}Same drive selected twice; running solo.{C.RESET}")
+        drive_b = None
+
+    return drive_a, drive_b
+
+
+# ---------------------------------------------------------------------------
 # Solo (single-drive) summary + report
 # ---------------------------------------------------------------------------
 def print_summary_solo(results: list, label: str):
@@ -1193,7 +1481,10 @@ def main():
         description="Disk Duel -- Comprehensive Drive Benchmark & Comparison",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("path_a", help="Path/mount point for Drive A (or the only drive in solo mode)")
+    parser.add_argument(
+        "path_a", nargs="?", default=None,
+        help="Path/mount point for Drive A (omit to use the interactive drive menu)"
+    )
     parser.add_argument(
         "path_b", nargs="?", default=None,
         help="(Optional) Path/mount point for Drive B. Omit to run solo benchmark on path_a only."
@@ -1201,6 +1492,10 @@ def main():
     parser.add_argument(
         "--labels", nargs="+", default=None, metavar="LABEL",
         help="Labels for the drives (1 label in solo mode, 2 in dual mode; default: path basenames)"
+    )
+    parser.add_argument(
+        "--non-interactive", action="store_true",
+        help="Disable the drive menu (requires path_a to be provided)"
     )
     parser.add_argument(
         "--quick", action="store_true",
@@ -1223,27 +1518,58 @@ def main():
 
     banner()
 
-    # Validate paths
-    print(f"{C.BOLD}Validating drives...{C.RESET}")
-    path_a = validate_path(args.path_a)
-    path_b = validate_path(args.path_b) if args.path_b else None
-    solo = path_b is None
+    # Host detection
+    host = get_host_info()
+    print(f"  {C.BOLD}Host:{C.RESET} {C.CYAN}{host_summary(host)}{C.RESET}")
+    print()
 
-    if solo:
-        if args.labels:
-            labels = (args.labels[0],)
+    # Resolve paths + labels: explicit args take precedence, else interactive menu.
+    if args.path_a:
+        print(f"{C.BOLD}Validating drives...{C.RESET}")
+        path_a = validate_path(args.path_a)
+        path_b = validate_path(args.path_b) if args.path_b else None
+        if path_b is None:
+            label_a = (args.labels[0] if args.labels else None) \
+                or os.path.basename(path_a) or path_a
+            label_b = None
         else:
-            labels = (os.path.basename(path_a) or path_a,)
+            if args.labels and len(args.labels) >= 2:
+                label_a, label_b = args.labels[0], args.labels[1]
+            else:
+                label_a = os.path.basename(path_a) or path_a
+                label_b = os.path.basename(path_b) or path_b
+    elif args.non_interactive:
+        parser.error("path_a is required when --non-interactive is set")
+    else:
+        print(f"{C.BOLD}Detecting drives...{C.RESET}")
+        drives = detect_drives()
+        if not drives:
+            print(f"{C.RED}No usable drives detected. Pass paths explicitly:{C.RESET}")
+            print(f"  python3 disk_duel.py /path/a [/path/b]")
+            sys.exit(1)
+        drive_a, drive_b = pick_drives_interactive(drives)
+        path_a = writable_test_path(drive_a)
+        if path_a is None:
+            print(f"{C.RED}No writable test path on {drive_a['volume_name']}.{C.RESET}")
+            sys.exit(1)
+        label_a = drive_a["volume_name"]
+        if drive_b is None:
+            path_b = None
+            label_b = None
+        else:
+            path_b = writable_test_path(drive_b)
+            if path_b is None:
+                print(f"{C.RED}No writable test path on {drive_b['volume_name']}.{C.RESET}")
+                sys.exit(1)
+            label_b = drive_b["volume_name"]
+
+    solo = path_b is None
+    if solo:
+        labels = (label_a,)
         print(f"  Drive:   {C.BLUE}{C.BOLD}{labels[0]}{C.RESET} ({path_a})")
         print(f"  {C.YELLOW}Solo mode -- no comparison.{C.RESET}")
     else:
-        if args.labels and len(args.labels) >= 2:
-            labels = (args.labels[0], args.labels[1])
-        else:
-            labels = (
-                os.path.basename(path_a) or path_a,
-                os.path.basename(path_b) or path_b,
-            )
+        labels = (label_a, label_b)
         print(f"  Drive A: {C.BLUE}{C.BOLD}{labels[0]}{C.RESET} ({path_a})")
         print(f"  Drive B: {C.RED}{C.BOLD}{labels[1]}{C.RESET} ({path_b})")
     print()
@@ -1398,6 +1724,7 @@ def main():
             payload = {
                 "timestamp": datetime.now().isoformat(),
                 "mode": "solo",
+                "host": host,
                 "label": labels[0],
                 "path": path_a,
                 "results": solo_results,
@@ -1407,6 +1734,7 @@ def main():
             payload = {
                 "timestamp": datetime.now().isoformat(),
                 "mode": "dual",
+                "host": host,
                 "labels": labels,
                 "paths": [path_a, path_b],
                 "results": scored_results,
