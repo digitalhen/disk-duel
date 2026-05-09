@@ -21,6 +21,8 @@ Usage (solo / single drive):
     python3 disk_duel.py /Volumes/MyDrive --labels "Crucial T705" --quick
 """
 
+from __future__ import annotations  # PEP 604 unions in annotations work back to 3.7
+
 import argparse
 import json
 import subprocess
