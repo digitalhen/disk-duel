@@ -184,17 +184,18 @@ def get_test_suite(quick: bool = False, size_mult: float = 1.0):
             "size": sz(512), "runtime": runtime,
             "metric": "iops", "unit": "IOPS",
         },
+        # QD64 uses 8 threads at QD8 each (matches AmorphousDiskMark RND4K-QD64).
         {
             "name": "Random Read 4K QD64",
             "category": "random_4k",
-            "rw": "randread", "bs": "4k", "iodepth": 64, "numjobs": 1,
+            "rw": "randread", "bs": "4k", "iodepth": 8, "numjobs": 8,
             "size": sz(512), "runtime": runtime,
             "metric": "iops", "unit": "IOPS",
         },
         {
             "name": "Random Write 4K QD64",
             "category": "random_4k",
-            "rw": "randwrite", "bs": "4k", "iodepth": 64, "numjobs": 1,
+            "rw": "randwrite", "bs": "4k", "iodepth": 8, "numjobs": 8,
             "size": sz(512), "runtime": runtime,
             "metric": "iops", "unit": "IOPS",
         },
