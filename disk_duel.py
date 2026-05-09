@@ -312,6 +312,18 @@ def ensure_matplotlib() -> bool:
         print(f"  {C.RED}install failed; charts will be skipped.{C.RESET}")
         return False
 
+    # If --user just created ~/Library/Python/X.Y/lib/python/site-packages
+    # for the first time, that directory wasn't on sys.path when site.py ran
+    # at interpreter startup. addsitedir() puts it there now so the import
+    # below can find the freshly installed packages.
+    import site
+    try:
+        user_site = site.getusersitepackages()
+        if user_site and user_site not in sys.path:
+            site.addsitedir(user_site)
+    except Exception:
+        pass
+
     import importlib
     importlib.invalidate_caches()
     try:
