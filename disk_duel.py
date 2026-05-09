@@ -1426,6 +1426,13 @@ def pick_drives_interactive(drives: list) -> tuple:
         print(f"      {C.DIM}Mount: {d['mount']}{C.RESET}")
         print()
 
+    # Single drive: nothing to choose; auto-select and skip the prompts.
+    if len(drives) == 1:
+        only = drives[0]
+        print(f"  {C.DIM}Only one drive detected -- running solo on "
+              f"{only['volume_name']}.{C.RESET}\n")
+        return only, None
+
     def _ask(prompt: str, *, allow_zero: bool = False) -> int:
         while True:
             try:
