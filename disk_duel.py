@@ -1864,6 +1864,11 @@ def main():
         "--skip-charts", action="store_true",
         help="Skip chart generation (useful if matplotlib is not available)"
     )
+    parser.add_argument(
+        "--only", default=None, metavar="PATTERN",
+        help="Run only tests whose name contains PATTERN (case-insensitive). "
+             "Disables upload since results are partial. Example: --only QD64"
+    )
 
     args = parser.parse_args()
 
@@ -1946,6 +1951,14 @@ def main():
 
     # Get test suite
     tests = get_test_suite(quick=args.quick, size_mult=args.size_multiplier)
+    if args.only:
+        needle = args.only.lower()
+        tests = [t for t in tests if needle in t["name"].lower()]
+        if not tests:
+            print(f"{C.RED}No tests match --only {args.only!r}.{C.RESET}")
+            sys.exit(1)
+        print(f"  {C.YELLOW}--only {args.only!r}: running "
+              f"{len(tests)} test(s); upload disabled.{C.RESET}")
     total_tests = len(tests)
 
     drive_count = 1 if solo else 2
@@ -2117,7 +2130,10 @@ def main():
     upload_url = os.environ.get("DISK_DUEL_UPLOAD_URL", DEFAULT_UPLOAD_URL).strip()
     api_key = os.environ.get("DISK_DUEL_API_KEY", "").strip() or None
     should_upload = False
-    if args.upload:
+    if args.only:
+        # Partial suites can't be meaningfully compared on the leaderboard.
+        should_upload = False
+    elif args.upload:
         should_upload = True
     elif args.no_upload:
         should_upload = False
