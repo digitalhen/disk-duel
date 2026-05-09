@@ -4,7 +4,7 @@ Comprehensive `fio`-based drive benchmark with a scored HTML report. Compare two
 
 Optionally publish your results to the public leaderboard at **[apps.cleartextlabs.com/disk-duel](https://apps.cleartextlabs.com/disk-duel/)** with `--upload`. Serials are hashed before storage and never displayed.
 
-The benchmark suite covers sequential throughput, random 4K IOPS at QD1/4/16/32, large-block random, mixed read/write, sustained sequential write, and QD1 latency — 19 tests total.
+The benchmark suite covers sequential throughput (incl. SEQ1M-QD8), random 4K IOPS at QD1/4/16/32/64, large-block random, mixed read/write, sustained sequential write, and QD1 latency — 23 tests total.
 
 ## Quick start
 
@@ -85,7 +85,7 @@ Outputs (in the current directory by default):
 
 ## Solo mode (single drive)
 
-Pass one path. Same 19-test suite, but no comparison: the report is a single-column scorecard with absolute numbers.
+Pass one path. Same 23-test suite, but no comparison: the report is a single-column scorecard with absolute numbers.
 
 ```bash
 python3 disk_duel.py /path/to/drive
@@ -125,8 +125,8 @@ Solo outputs are the same filenames but with a simpler structure:
 
 | Category | Tests | Primary metric |
 |---|---|---|
-| Sequential | Read/Write at 1M and 128K block sizes | MB/s |
-| Random 4K | Read/Write at QD1, QD4, QD16, QD32 | IOPS |
+| Sequential | Read/Write at 1M and 128K block sizes, plus 1M QD8 (matches AmorphousDiskMark SEQ1M-QD8) | MB/s |
+| Random 4K | Read/Write at QD1, QD4, QD16, QD32, QD64 | IOPS |
 | Large random | Read/Write at 64K QD16 | MB/s |
 | Mixed | 70/30 R/W at 4K QD16 and 64K QD16 | IOPS or MB/s |
 | Sustained | 30s sequential write at 1M QD4 | MB/s |

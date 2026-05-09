@@ -111,6 +111,22 @@ def get_test_suite(quick: bool = False, size_mult: float = 1.0):
             "metric": "bw_mb", "unit": "MB/s",
         },
 
+        # --- Sequential 1M at QD8 (matches AmorphousDiskMark SEQ1M-QD8) ---
+        {
+            "name": "Sequential Read 1M QD8",
+            "category": "sequential_qd8",
+            "rw": "read", "bs": "1M", "iodepth": 8, "numjobs": 1,
+            "size": sz(2048), "runtime": runtime,
+            "metric": "bw_mb", "unit": "MB/s",
+        },
+        {
+            "name": "Sequential Write 1M QD8",
+            "category": "sequential_qd8",
+            "rw": "write", "bs": "1M", "iodepth": 8, "numjobs": 1,
+            "size": sz(2048), "runtime": runtime,
+            "metric": "bw_mb", "unit": "MB/s",
+        },
+
         # --- Random 4K at various queue depths ---
         {
             "name": "Random Read 4K QD1",
@@ -165,6 +181,20 @@ def get_test_suite(quick: bool = False, size_mult: float = 1.0):
             "name": "Random Write 4K QD32",
             "category": "random_4k",
             "rw": "randwrite", "bs": "4k", "iodepth": 32, "numjobs": 1,
+            "size": sz(512), "runtime": runtime,
+            "metric": "iops", "unit": "IOPS",
+        },
+        {
+            "name": "Random Read 4K QD64",
+            "category": "random_4k",
+            "rw": "randread", "bs": "4k", "iodepth": 64, "numjobs": 1,
+            "size": sz(512), "runtime": runtime,
+            "metric": "iops", "unit": "IOPS",
+        },
+        {
+            "name": "Random Write 4K QD64",
+            "category": "random_4k",
+            "rw": "randwrite", "bs": "4k", "iodepth": 64, "numjobs": 1,
             "size": sz(512), "runtime": runtime,
             "metric": "iops", "unit": "IOPS",
         },
@@ -578,7 +608,8 @@ def chart_sequential(results: list, labels: tuple) -> str:
     """Bar chart comparing sequential throughput."""
     plt, np = setup_matplotlib()
 
-    seq_tests = [r for r in results if r.get("category") == "sequential" and "score" in r]
+    seq_tests = [r for r in results
+                 if r.get("category") in ("sequential", "sequential_qd8") and "score" in r]
     if not seq_tests:
         return ""
 
@@ -641,7 +672,7 @@ def chart_qd_scaling(results: list, labels: tuple) -> str:
             qds = []
             iops_vals = []
             for m in matching:
-                for qd in [1, 4, 16, 32]:
+                for qd in [1, 4, 16, 32, 64]:
                     if f"QD{qd}" in m["test_name"]:
                         qds.append(qd)
                         iops_vals.append(m["primary_value"])
@@ -657,7 +688,7 @@ def chart_qd_scaling(results: list, labels: tuple) -> str:
         ax.set_xlabel("Queue Depth", fontweight="bold")
         ax.set_ylabel("IOPS", fontweight="bold")
         ax.set_title(f"Random 4K {rw_label} -- QD Scaling", fontweight="bold", fontsize=12, pad=10)
-        ax.set_xticks([1, 4, 16, 32])
+        ax.set_xticks([1, 4, 16, 32, 64])
         ax.legend(loc="upper left", framealpha=0.3)
         ax.grid(True, linestyle="--")
         ax.set_axisbelow(True)
