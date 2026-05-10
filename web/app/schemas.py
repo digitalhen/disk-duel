@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HostInfo(BaseModel):
@@ -33,6 +33,10 @@ class TestResultIn(BaseModel):
     """Per-(test, drive) row, matching the keys the script writes into
     all_results. Most lat/bw fields are optional because not every test
     populates both read and write sides."""
+    # Allow extra keys (e.g. raw fio internals like write_bw_kb) so the full
+    # script payload survives in raw_payload without being silently dropped.
+    model_config = ConfigDict(extra="allow")
+
     test_name: str
     category: str
     label: str
@@ -50,6 +54,12 @@ class TestResultIn(BaseModel):
     write_lat_us_p50: float | None = None
     write_lat_us_p99: float | None = None
     write_lat_us_p999: float | None = None
+    # Per-second bandwidth + per-N-second temperature samples produced by
+    # `--sustained` runs. dict-shaped to keep the schema flexible:
+    #   {"bw_samples": [[t_s, mb_s], ...],
+    #    "temp_samples": [[t_s, celsius|null], ...],
+    #    "device": "/dev/diskN", "bw_unit": "MB/s", "temp_unit": "C", ...}
+    time_series: dict[str, Any] | None = None
 
 
 class RunIn(BaseModel):
@@ -82,3 +92,36 @@ class RunOut(BaseModel):
     machine_slug: str
     run_url: str
     machine_url: str
+
+
+class ThermalDriveResult(BaseModel):
+    """One drive's slice of an attach-thermal payload. Matches the keys
+    `run_thermal_test` writes into all_results, plus the time_series dict."""
+    model_config = ConfigDict(extra="allow")
+
+    label: str
+    primary_value: float
+    primary_unit: str = "MB/s"
+    write_bw_mb: float | None = None
+    write_iops: float | None = None
+    write_lat_us_mean: float | None = None
+    write_lat_us_p50: float | None = None
+    write_lat_us_p99: float | None = None
+    write_lat_us_p999: float | None = None
+    time_series: dict[str, Any]
+
+
+class AttachThermalIn(BaseModel):
+    """Body for POST /api/v1/admin/runs/{slug}/attach-thermal — adds a
+    sustained-write thermal test (with bandwidth + temperature time series)
+    to an existing run. Idempotent: re-posting replaces the test data for
+    the same (run, drive, test_name) triple."""
+    test_name: str = "Sustained Write 5min"
+    category: str = "thermal"
+    drives: list[ThermalDriveResult]
+
+
+class AttachThermalOut(BaseModel):
+    run_slug: str
+    run_url: str
+    drives_updated: int

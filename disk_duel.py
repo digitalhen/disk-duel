@@ -32,6 +32,8 @@ import shutil
 import time
 import base64
 import io
+import tempfile
+import threading
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
@@ -68,8 +70,11 @@ def banner():
 # ---------------------------------------------------------------------------
 # Test suite definitions
 # ---------------------------------------------------------------------------
-def get_test_suite(quick: bool = False, size_mult: float = 1.0):
-    """Return the full benchmark test suite."""
+def get_test_suite(quick: bool = False, size_mult: float = 1.0,
+                   sustained: bool = False):
+    """Return the full benchmark test suite. When `sustained=True`, append
+    a 5-minute thermal stress test that runs *outside* the regular fio
+    runner and produces a time-series of bandwidth + drive temperature."""
 
     def sz(base_mb: int) -> str:
         val = max(16, int(base_mb * size_mult))
@@ -259,6 +264,21 @@ def get_test_suite(quick: bool = False, size_mult: float = 1.0):
             "metric": "lat_us_p99", "unit": "us (p99)",
         },
     ]
+
+    if sustained:
+        # 5-minute thermal stress test. Runs through `run_thermal_test` instead
+        # of the standard runner so it can capture a per-second bandwidth log
+        # and a parallel temperature trace. Always 300s regardless of --quick;
+        # the point is sustained behavior, which a 60s run can't show.
+        tests.append({
+            "name": "Sustained Write 5min",
+            "category": "thermal",
+            "rw": "write", "bs": "1M", "iodepth": 4, "numjobs": 1,
+            "size": sz(8192), "runtime": "300s",
+            "metric": "bw_mb", "unit": "MB/s",
+            "thermal": True,
+        })
+
     return tests
 
 
@@ -366,6 +386,100 @@ def ensure_matplotlib() -> bool:
         print(f"  {C.YELLOW}install completed but matplotlib still not importable; "
               f"charts will be skipped.{C.RESET}")
         return False
+
+
+def ensure_smartmontools() -> bool:
+    """macOS-only: ensure `smartctl` is on PATH so the thermal test can read
+    NVMe drive temperatures. Returns True iff smartctl is available.
+    Linux is intentionally not supported here because reading /dev/nvme*
+    SMART data needs root, which the script can't reasonably prompt for."""
+    if shutil.which("smartctl") is not None:
+        try:
+            ver = subprocess.check_output(["smartctl", "-V"], text=True).splitlines()[0].strip()
+        except (subprocess.CalledProcessError, FileNotFoundError, IndexError):
+            ver = "(version unknown)"
+        print(f"  {C.DIM}smartctl: {ver}{C.RESET}")
+        return True
+
+    if sys.platform != "darwin":
+        print(f"  {C.YELLOW}smartctl not available; thermal sampling will be skipped. "
+              f"(Linux requires root for NVMe SMART access.){C.RESET}")
+        return False
+
+    if shutil.which("brew") is None:
+        print(f"  {C.YELLOW}smartctl not installed and Homebrew is missing; "
+              f"thermal sampling will be skipped.{C.RESET}")
+        print(f"  {C.YELLOW}Install with: brew install smartmontools{C.RESET}")
+        return False
+
+    print(f"  {C.YELLOW}smartmontools is not installed.{C.RESET}")
+    if not _prompt_yes("Install smartmontools via brew (needed for thermal sampling)?"):
+        print(f"  {C.YELLOW}thermal sampling will be skipped. Install later with: "
+              f"brew install smartmontools{C.RESET}")
+        return False
+
+    if not _run_install(["brew", "install", "smartmontools"]):
+        print(f"  {C.RED}install failed; thermal sampling will be skipped.{C.RESET}")
+        return False
+    if shutil.which("smartctl") is None:
+        print(f"  {C.RED}smartctl still not on PATH after install; thermal sampling "
+              f"will be skipped.{C.RESET}")
+        return False
+    print(f"  {C.GREEN}smartmontools installed.{C.RESET}")
+    return True
+
+
+def _device_for_path(path: str) -> str | None:
+    """Map a mount point to a /dev/diskN BSD device on macOS. Returns the
+    *parent* whole-disk node (e.g. /dev/disk0) so smartctl reads the NVMe
+    controller, not just one APFS volume slice. Returns None on non-macOS
+    or if diskutil can't resolve the path."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        out = subprocess.check_output(
+            ["diskutil", "info", "-plist", path],
+            stderr=subprocess.DEVNULL,
+            text=False,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    import plistlib
+    try:
+        info = plistlib.loads(out)
+    except Exception:
+        return None
+    parent = info.get("ParentWholeDisk") or info.get("DeviceIdentifier")
+    if not parent:
+        return None
+    if not parent.startswith("/dev/"):
+        parent = "/dev/" + parent
+    return parent
+
+
+def _read_drive_temp_c(device: str) -> int | None:
+    """Read the current NVMe composite temperature (Celsius) via smartctl.
+    Returns None on any error. Cheap enough to call every few seconds."""
+    if shutil.which("smartctl") is None or not device:
+        return None
+    try:
+        out = subprocess.check_output(
+            ["smartctl", "-A", device],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    for line in out.splitlines():
+        # NVMe SMART log line: "Temperature:                        35 Celsius"
+        if line.strip().startswith("Temperature:"):
+            parts = line.split()
+            for tok in parts[1:]:
+                if tok.isdigit():
+                    return int(tok)
+    return None
 
 
 def run_fio_test(test: dict, directory: str, label: str) -> dict:
@@ -523,6 +637,186 @@ def run_fio_test(test: dict, directory: str, label: str) -> dict:
     except json.JSONDecodeError as e:
         print(f"    {C.RED}JSON parse error: {e}{C.RESET}")
         return {"error": True}
+
+
+def run_thermal_test(test: dict, directory: str, label: str,
+                     device: Optional[str]) -> dict:
+    """Long sustained-write test with concurrent bandwidth + temperature
+    sampling. Returns the same shape as run_fio_test plus a `time_series`
+    dict (bw_samples, temp_samples) suitable for plotting.
+
+    `device` is the BSD node from `_device_for_path` (e.g. /dev/disk0).
+    Pass None to skip thermal sampling -- bandwidth still gets logged."""
+    test_file = os.path.join(directory, ".disk_duel_testfile")
+    log_dir = tempfile.mkdtemp(prefix="disk_duel_thermal_")
+    bw_prefix = os.path.join(log_dir, "fio")
+    json_out = bw_prefix + ".json"
+    bw_log = bw_prefix + "_bw.log"
+
+    is_macos = sys.platform == "darwin"
+    cmd = [
+        "fio",
+        f"--name={test['name'].replace(' ', '_')}",
+        f"--directory={directory}",
+        f"--filename=.disk_duel_testfile",
+        f"--rw={test['rw']}",
+        f"--bs={test['bs']}",
+        f"--iodepth={test['iodepth']}",
+        f"--numjobs={test['numjobs']}",
+        f"--size={test['size']}",
+        f"--runtime={test['runtime']}",
+        "--time_based",
+        "--group_reporting",
+        "--output-format=json",
+        f"--output={json_out}",
+        "--norandommap",
+        "--direct=1",
+        "--end_fsync=1",
+        f"--write_bw_log={bw_prefix}",
+        "--log_avg_msec=1000",
+        "--per_job_logs=0",
+    ]
+    if is_macos and test["iodepth"] > 1:
+        cmd.append("--ioengine=posixaio")
+
+    # Generous timeout: end_fsync after 5 min of sustained writes can take a while.
+    rt_str = str(test["runtime"]).rstrip("s")
+    try:
+        runtime_s = int(rt_str)
+    except ValueError:
+        runtime_s = 300
+    timeout = runtime_s + 180
+
+    # Temperature sampler runs concurrently; samples both 'active' device and
+    # any extras the caller wires in later. For now we keep it simple: one
+    # device per call, since each sustained run targets one drive at a time.
+    temp_samples: list[list] = []
+    sampler_stop = threading.Event()
+    sampler_t0 = time.time()
+
+    def sample_loop() -> None:
+        while True:
+            t = _read_drive_temp_c(device) if device else None
+            elapsed = round(time.time() - sampler_t0, 2)
+            temp_samples.append([elapsed, t])
+            if sampler_stop.wait(3):
+                break
+
+    sampler = threading.Thread(target=sample_loop, daemon=True)
+    if device:
+        sampler.start()
+
+    def _percentiles(side: dict) -> dict:
+        return (side.get("clat_ns", {}).get("percentile")
+                or side.get("lat_ns", {}).get("percentile") or {})
+
+    try:
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            print(f"    {C.RED}thermal test timed out after {timeout}s{C.RESET}")
+            return {"error": True}
+
+        if res.returncode != 0 and "--direct=1" in cmd and (
+            "Invalid argument" in res.stderr or "direct" in res.stderr.lower()
+        ):
+            cmd = [c for c in cmd if c != "--direct=1"]
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                return {"error": True}
+
+        if res.returncode != 0:
+            print(f"    {C.RED}fio error: {res.stderr[:300]}{C.RESET}")
+            return {"error": True}
+
+        try:
+            with open(json_out) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"    {C.RED}fio JSON parse error: {e}{C.RESET}")
+            return {"error": True}
+
+        job = data["jobs"][0]
+        rw = test["rw"]
+        is_read = rw in ("read", "randread")
+        is_write = rw in ("write", "randwrite")
+
+        parsed = {
+            "test_name": test["name"],
+            "category": test["category"],
+            "label": label,
+        }
+
+        if is_write:
+            w = job["write"]
+            parsed["write_bw_kb"] = w["bw"]
+            parsed["write_bw_mb"] = w["bw"] / 1024.0
+            parsed["write_iops"] = w["iops"]
+            parsed["write_lat_ns_mean"] = w["lat_ns"]["mean"]
+            parsed["write_lat_us_mean"] = w["lat_ns"]["mean"] / 1000.0
+            pct = _percentiles(w)
+            parsed["write_lat_ns_p50"]  = pct.get("50.000000", 0)
+            parsed["write_lat_ns_p99"]  = pct.get("99.000000", 0)
+            parsed["write_lat_ns_p999"] = pct.get("99.900000", 0)
+            parsed["write_lat_us_p50"]  = parsed["write_lat_ns_p50"] / 1000.0
+            parsed["write_lat_us_p99"]  = parsed["write_lat_ns_p99"] / 1000.0
+            parsed["write_lat_us_p999"] = parsed["write_lat_ns_p999"] / 1000.0
+            parsed["primary_value"] = parsed["write_bw_mb"]
+        elif is_read:
+            r = job["read"]
+            parsed["read_bw_kb"] = r["bw"]
+            parsed["read_bw_mb"] = r["bw"] / 1024.0
+            parsed["read_iops"] = r["iops"]
+            parsed["read_lat_ns_mean"] = r["lat_ns"]["mean"]
+            parsed["read_lat_us_mean"] = r["lat_ns"]["mean"] / 1000.0
+            pct = _percentiles(r)
+            parsed["read_lat_ns_p50"]  = pct.get("50.000000", 0)
+            parsed["read_lat_ns_p99"]  = pct.get("99.000000", 0)
+            parsed["read_lat_ns_p999"] = pct.get("99.900000", 0)
+            parsed["read_lat_us_p50"]  = parsed["read_lat_ns_p50"] / 1000.0
+            parsed["read_lat_us_p99"]  = parsed["read_lat_ns_p99"] / 1000.0
+            parsed["read_lat_us_p999"] = parsed["read_lat_ns_p999"] / 1000.0
+            parsed["primary_value"] = parsed["read_bw_mb"]
+        else:
+            parsed["primary_value"] = 0
+
+        parsed["primary_unit"] = test["unit"]
+
+        # bw log columns: time_ms, value_kb_s, direction, bs, offset
+        bw_samples: list[list] = []
+        try:
+            with open(bw_log) as f:
+                for line in f:
+                    parts = [p.strip() for p in line.split(",")]
+                    if len(parts) < 2 or not parts[0].lstrip("-").isdigit():
+                        continue
+                    t_ms = int(parts[0])
+                    kbs = int(parts[1])
+                    bw_samples.append([round(t_ms / 1000.0, 2),
+                                       round(kbs / 1024.0, 1)])
+        except FileNotFoundError:
+            pass
+
+        parsed["time_series"] = {
+            "bw_samples": bw_samples,
+            "temp_samples": temp_samples if device else [],
+            "device": device,
+            "bw_unit": "MB/s",
+            "temp_unit": "C",
+            "log_avg_msec": 1000,
+        }
+        return parsed
+
+    finally:
+        sampler_stop.set()
+        if device:
+            sampler.join(timeout=5)
+        try:
+            os.remove(test_file)
+        except OSError:
+            pass
+        shutil.rmtree(log_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1869,6 +2163,12 @@ def main():
         help="Run only tests whose name contains PATTERN (case-insensitive). "
              "Disables upload since results are partial. Example: --only QD64"
     )
+    parser.add_argument(
+        "--sustained", action="store_true",
+        help="Add a 5-minute sustained-write thermal test (1M QD4) with "
+             "per-second bandwidth + per-3-second drive temperature sampling. "
+             "macOS only; requires smartmontools (auto-installed via brew)."
+    )
 
     args = parser.parse_args()
 
@@ -1947,10 +2247,33 @@ def main():
     if not args.skip_charts:
         has_matplotlib = ensure_matplotlib()
 
+    has_smartctl = False
+    if args.sustained:
+        has_smartctl = ensure_smartmontools()
+
     print()
 
+    # Resolve BSD devices for the chosen paths once. Used by run_thermal_test
+    # to pin smartctl reads to the right drive when --sustained is on. Quietly
+    # falls back to None on non-macOS or if diskutil can't resolve the path.
+    device_a = _device_for_path(path_a) if args.sustained else None
+    device_b = _device_for_path(path_b) if (args.sustained and path_b) else None
+    if args.sustained:
+        if device_a:
+            print(f"  {C.DIM}{labels[0]} → {device_a}{C.RESET}")
+        if device_b:
+            print(f"  {C.DIM}{labels[1]} → {device_b}{C.RESET}")
+        if not has_smartctl:
+            print(f"  {C.YELLOW}Thermal test will run, but no temperature data "
+                  f"will be captured (smartctl unavailable).{C.RESET}")
+        print()
+
     # Get test suite
-    tests = get_test_suite(quick=args.quick, size_mult=args.size_multiplier)
+    tests = get_test_suite(
+        quick=args.quick,
+        size_mult=args.size_multiplier,
+        sustained=args.sustained,
+    )
     if args.only:
         needle = args.only.lower()
         tests = [t for t in tests if needle in t["name"].lower()]
@@ -1974,14 +2297,23 @@ def main():
     scored_results = []  # only populated in dual mode
     solo_results = []    # only populated in solo mode
 
+    def _run_test(test, directory, label, device):
+        """Dispatch a single test to the right runner."""
+        if test.get("thermal"):
+            return run_thermal_test(test, directory, label, device)
+        return run_fio_test(test, directory, label)
+
     for i, test in enumerate(tests):
         test_num = i + 1
         print(f"{C.BOLD}[{test_num}/{total_tests}] {test['name']}{C.RESET}")
+        if test.get("thermal"):
+            print(f"  {C.DIM}5-minute sustained-write test with thermal sampling. "
+                  f"This will take a while.{C.RESET}")
 
         # Drive A
         print(f"  {C.BLUE}{labels[0]}{C.RESET}...", end=" ", flush=True)
         t0 = time.time()
-        result_a = run_fio_test(test, path_a, labels[0])
+        result_a = _run_test(test, path_a, labels[0], device_a)
         elapsed_a = time.time() - t0
 
         if result_a.get("error"):
@@ -1989,6 +2321,12 @@ def main():
             continue
         val_a = result_a["primary_value"]
         print(f"{C.GREEN}{val_a:,.1f} {test['unit']}{C.RESET} ({elapsed_a:.1f}s)")
+        if test.get("thermal"):
+            ts = result_a.get("time_series") or {}
+            temps = [t for _, t in (ts.get("temp_samples") or []) if t is not None]
+            if temps:
+                print(f"  {C.DIM}temp: start={temps[0]}°C peak={max(temps)}°C "
+                      f"end={temps[-1]}°C{C.RESET}")
 
         if solo:
             all_results.append(result_a)
@@ -2004,7 +2342,7 @@ def main():
         # Drive B
         print(f"  {C.RED}{labels[1]}{C.RESET}...", end=" ", flush=True)
         t0 = time.time()
-        result_b = run_fio_test(test, path_b, labels[1])
+        result_b = _run_test(test, path_b, labels[1], device_b)
         elapsed_b = time.time() - t0
 
         if result_b.get("error"):
@@ -2012,6 +2350,12 @@ def main():
             continue
         val_b = result_b["primary_value"]
         print(f"{C.GREEN}{val_b:,.1f} {test['unit']}{C.RESET} ({elapsed_b:.1f}s)")
+        if test.get("thermal"):
+            ts = result_b.get("time_series") or {}
+            temps = [t for _, t in (ts.get("temp_samples") or []) if t is not None]
+            if temps:
+                print(f"  {C.DIM}temp: start={temps[0]}°C peak={max(temps)}°C "
+                      f"end={temps[-1]}°C{C.RESET}")
 
         # Score
         is_latency = test["category"] == "latency"

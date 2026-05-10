@@ -36,6 +36,27 @@
 </section>
 {% endif %}
 
+{% if thermal_series %}
+<section id="thermal-section">
+    <h2>Sustained-write thermals <small>5-minute 1M QD4 stress test, per-second bandwidth + drive temperature</small></h2>
+    {% for entry in thermal_series %}
+    <div class="panel thermal-panel" style="padding: 22px; margin-bottom: 18px;">
+        <h3 style="margin-top: 0;">{{ entry.test_name }}</h3>
+        <div class="thermal-charts">
+            <div>
+                <h4 style="margin: 0 0 8px;">Bandwidth (MB/s)</h4>
+                <canvas class="thermal-bw" data-test="{{ entry.test_name }}" height="120"></canvas>
+            </div>
+            <div>
+                <h4 style="margin: 0 0 8px;">Drive temperature (°C)</h4>
+                <canvas class="thermal-temp" data-test="{{ entry.test_name }}" height="120"></canvas>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</section>
+{% endif %}
+
 <section>
     <h2>Results</h2>
     <div class="panel">
@@ -106,5 +127,9 @@
 }
 </script>
 <script src="{{ request.url_for('static', path='charts.js') }}?v={{ static_version }}"></script>
+{% endif %}
+{% if thermal_series %}
+<script id="thermal-data" type="application/json">{{ thermal_series | tojson }}</script>
+<script src="{{ request.url_for('static', path='thermal.js') }}?v={{ static_version }}"></script>
 {% endif %}
 {% endblock %}

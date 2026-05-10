@@ -9,10 +9,19 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status  
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from app.config import settings
 from app.db import get_db
 from app.models import Drive, Machine, Run, TestResult
-from app.schemas import DriveInfo, RunIn, RunOut, TestResultIn
+from app.schemas import (
+    AttachThermalIn,
+    AttachThermalOut,
+    DriveInfo,
+    RunIn,
+    RunOut,
+    TestResultIn,
+)
 from app.slugs import hash_serial, machine_slug, run_slug
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
@@ -289,4 +298,101 @@ def submit_run(
         machine_slug=machine.slug,
         run_url=f"{base}/run/{run.slug}/",
         machine_url=f"{base}/machine/{machine.slug}/",
+    )
+
+
+@router.post(
+    "/admin/runs/{slug}/attach-thermal",
+    response_model=AttachThermalOut,
+    dependencies=[Depends(require_api_key)],
+)
+def attach_thermal(
+    slug: str,
+    body: AttachThermalIn,
+    db: Session = Depends(get_db),
+) -> AttachThermalOut:
+    """Attach a sustained-write thermal test (bandwidth + temperature
+    time-series) to an existing run. Used to backfill V428O1yd-style runs
+    that were uploaded before the --sustained flag existed.
+
+    Idempotent: re-posting replaces the test data for the same
+    (run, drive, test_name) triple, both in TestResult rows and in the
+    run.raw_payload all_results array (so the run page chart re-renders
+    with the new numbers)."""
+    run = db.scalar(select(Run).where(Run.slug == slug))
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"run {slug!r} not found")
+
+    # Map provided drive labels to the run's existing Drive rows. A label
+    # has to match either label_a or label_b, otherwise we'd be inventing
+    # a third drive on a run that didn't have one.
+    label_to_drive: dict[str, Drive] = {}
+    if run.drive_a and run.label_a:
+        label_to_drive[run.label_a] = run.drive_a
+    if run.drive_b and run.label_b:
+        label_to_drive[run.label_b] = run.drive_b
+
+    unknown = [d.label for d in body.drives if d.label not in label_to_drive]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"labels not in run: {unknown}; "
+                   f"expected one of {list(label_to_drive)}",
+        )
+
+    # Replace existing TestResult rows for this (run, drive, test_name) so
+    # repeat calls don't accumulate duplicates.
+    existing = db.scalars(
+        select(TestResult).where(
+            TestResult.run_id == run.id,
+            TestResult.test_name == body.test_name,
+        )
+    ).all()
+    for tr in existing:
+        db.delete(tr)
+    db.flush()
+
+    new_all_results_entries: list[dict] = []
+    for d in body.drives:
+        drv = label_to_drive[d.label]
+        db.add(TestResult(
+            run_id=run.id,
+            drive_id=drv.id,
+            test_name=body.test_name,
+            category=body.category,
+            primary_unit=d.primary_unit,
+            primary_value=d.primary_value,
+            write_bw_mb=d.write_bw_mb,
+            write_iops=d.write_iops,
+            write_lat_us_mean=d.write_lat_us_mean,
+            write_lat_us_p50=d.write_lat_us_p50,
+            write_lat_us_p99=d.write_lat_us_p99,
+            write_lat_us_p999=d.write_lat_us_p999,
+        ))
+        # Mirror into all_results for the chart renderer in pages.py.
+        entry = d.model_dump(mode="json")
+        entry["test_name"] = body.test_name
+        entry["category"] = body.category
+        new_all_results_entries.append(entry)
+
+    # Update raw_payload JSONB. The pages.py route reads time_series out of
+    # raw_payload["all_results"], so this is what makes the chart appear.
+    raw = dict(run.raw_payload or {})
+    all_results = list(raw.get("all_results") or [])
+    all_results = [
+        e for e in all_results
+        if not (isinstance(e, dict) and e.get("test_name") == body.test_name)
+    ]
+    all_results.extend(new_all_results_entries)
+    raw["all_results"] = all_results
+    run.raw_payload = raw
+    flag_modified(run, "raw_payload")
+
+    db.commit()
+
+    base = settings.public_base_url.rstrip("/") + (settings.root_path or "")
+    return AttachThermalOut(
+        run_slug=run.slug,
+        run_url=f"{base}/run/{run.slug}/",
+        drives_updated=len(body.drives),
     )

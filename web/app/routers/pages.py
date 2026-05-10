@@ -207,9 +207,48 @@ def run_detail(slug: str, request: Request, db: Session = Depends(get_db)) -> HT
         seen.add(tr.test_name)
         ordered.append((tr.test_name, grouped[tr.test_name]))
 
+    # Pull time_series data out of the original payload so the run page can
+    # render bandwidth/temperature traces for --sustained runs. Not every
+    # run has them; older payloads predate the field. Shape:
+    #   thermal_series = [
+    #     {"test_name": "Sustained Write 5min", "drives": [
+    #         {"label": "...", "media_name": "...", "color_role": "a",
+    #          "bw_samples": [...], "temp_samples": [...]},
+    #         ...
+    #     ]},
+    #   ]
+    thermal_series: list[dict] = []
+    raw = r.raw_payload or {}
+    all_results = raw.get("all_results") or []
+    by_test: dict[str, list[dict]] = defaultdict(list)
+    for entry in all_results:
+        ts = entry.get("time_series")
+        if not isinstance(ts, dict):
+            continue
+        if not ts.get("bw_samples") and not ts.get("temp_samples"):
+            continue
+        by_test[entry["test_name"]].append({
+            "label": entry.get("label"),
+            "bw_samples": ts.get("bw_samples") or [],
+            "temp_samples": ts.get("temp_samples") or [],
+            "bw_unit": ts.get("bw_unit") or "MB/s",
+            "temp_unit": ts.get("temp_unit") or "C",
+        })
+    label_to_role: dict[str, str] = {r.label_a: "a"}
+    if r.label_b:
+        label_to_role[r.label_b] = "b"
+    label_to_media: dict[str, str] = {r.label_a: r.drive_a.media_name}
+    if r.drive_b and r.label_b:
+        label_to_media[r.label_b] = r.drive_b.media_name
+    for test_name, drives in by_test.items():
+        for d in drives:
+            d["color_role"] = label_to_role.get(d["label"], "a")
+            d["media_name"] = label_to_media.get(d["label"], d["label"] or "")
+        thermal_series.append({"test_name": test_name, "drives": drives})
+
     return templates.TemplateResponse(
         request, "run.html",
-        {"run": r, "tests": ordered},
+        {"run": r, "tests": ordered, "thermal_series": thermal_series},
     )
 
 

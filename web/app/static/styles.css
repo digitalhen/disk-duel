@@ -402,6 +402,23 @@ footer {
 }
 footer a { color: var(--muted); }
 
+/* ── thermal panel (sustained-write run charts) ───────────────────── */
+.thermal-charts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin-top: 8px;
+}
+.thermal-charts > div { min-width: 0; }
+.thermal-charts canvas { height: 240px !important; }
+.thermal-panel h4 {
+    color: var(--muted);
+    font-size: 0.85em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
 /* ── responsive ────────────────────────────────────────────────────── */
 @media (max-width: 720px) {
     h1 { font-size: 40px; }
@@ -409,6 +426,7 @@ footer a { color: var(--muted); }
     .hero .lede { font-size: 16px; }
     .stats-row { gap: 20px; padding: 10px 18px; font-size: 0.85em; }
     .run-drives { grid-template-columns: 1fr; }
+    .thermal-charts { grid-template-columns: 1fr; }
     nav { gap: 16px; }
     nav a { font-size: 0.85em; }
     main { padding: 36px 0 60px; }
