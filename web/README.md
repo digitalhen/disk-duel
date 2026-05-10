@@ -2,8 +2,9 @@
 
 Public leaderboard for Disk Duel benchmark runs. Sister project to the [`disk_duel.py`](../disk_duel.py) script.
 
-- **API**: `POST /api/v1/runs/` accepts the script's JSON payload and returns public URLs.
-- **Pages**: home (top-10 leaderboards), `/machine/<slug>/`, `/run/<slug>/`, `/browse/`, `/about/`.
+- **API (public)**: `POST /api/v1/runs/` accepts the script's JSON payload (with proof-of-work) and returns public URLs.
+- **API (admin)**: `POST /api/v1/admin/runs/{slug}/attach-thermal` (X-API-Key gated) attaches a sustained-write thermal test — bandwidth + temperature time series — to an existing run. Idempotent.
+- **Pages**: home (top-10 leaderboards), `/machine/<slug>/`, `/run/<slug>/`, `/browse/`, `/about/`. Run pages render BW-over-time and °C-over-time line charts when the run includes `--sustained` data.
 - **Privacy**: serial numbers are hashed (`sha256`) before storage and never displayed. Public URLs use opaque `hashids` slugs.
 
 ## Stack
@@ -30,7 +31,7 @@ Connect to whatever Postgres instance you want to host the project-scoped DB.
    - `HASHIDS_SALT` — `openssl rand -hex 16`. **Changing this invalidates every existing public URL.**
    - `ROOT_PATH` — `/disk-duel` in production, empty for local
    - `PUBLIC_BASE_URL` — base URL the API returns to the script
-   - `DISK_DUEL_API_KEY` — *optional*; reserved for future admin endpoints, not used by the public submit path
+   - `DISK_DUEL_API_KEY` — required for the admin attach-thermal endpoint, ignored on the public submit path. Set to a random 32+ byte hex string (`openssl rand -hex 32`).
 
 3. Apply migrations:
 
@@ -68,7 +69,25 @@ The script does a proof-of-work hash before posting (`POW_DIFFICULTY_BITS = 20` 
 2. **Per-`serial_hash` cooldown** in DB (`serial_cooldown_seconds`, default 60s)
 3. **PoW verify** — `sha256("disk-duel:v1:{serial}:{timestamp}:{nonce}")` must have N leading zero bits
 
-`DISK_DUEL_API_KEY` is reserved for future admin endpoints (delete a run, ban a serial, etc.) and isn't checked on the public submit path.
+`DISK_DUEL_API_KEY` gates the admin endpoints (currently just `attach-thermal`, more to come) and isn't checked on the public submit path.
+
+### Attaching thermal data to an existing run
+
+`disk_duel.py --sustained` runs a 5-minute thermal test alongside the regular suite, and uploads the time-series with the rest of the payload. To backfill the thermal test onto an existing run instead, the admin endpoint accepts a smaller payload:
+
+```bash
+curl -X POST "https://apps.cleartextlabs.com/disk-duel/api/v1/admin/runs/<slug>/attach-thermal" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $DISK_DUEL_API_KEY" \
+  -H "User-Agent: Mozilla/5.0" \
+  -d @payload.json
+```
+
+`payload.json` shape: `{"test_name": "Sustained Write 5min", "category": "thermal", "drives": [{"label": "<must match run.label_a or label_b>", "primary_value": 5284.2, "primary_unit": "MB/s", "write_bw_mb": 5284.2, "time_series": {"bw_samples": [[t_s, mb_s], ...], "temp_samples": [[t_s, celsius], ...]}}, ...]}`.
+
+The endpoint replaces any existing TestResult rows for the same `(run, test_name)` triple, so re-posting is safe. It also patches `run.raw_payload` so the chart re-renders.
+
+> **Cloudflare note:** the `/admin/` URL trips Cloudflare's default WAF rule unless you send a real-browser User-Agent. Either set one (as above) or add a WAF exception for `/api/v1/admin/*`.
 
 ## Deployment
 
@@ -111,6 +130,8 @@ test_results
   ├── test_name, category, primary_unit, primary_value
   └── read_*/write_* (bw_mb, iops, lat_us_{mean,p50,p99,p999})
 ```
+
+`--sustained` time-series data (per-second `bw_samples`, per-3-second `temp_samples`) lives in `runs.raw_payload` under `all_results[i].time_series`. Storing it in JSONB rather than a dedicated table keeps the schema stable and the run page rendering simple — `pages.py` reads it straight from the JSONB on each render.
 
 ## Leaderboard rule
 

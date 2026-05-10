@@ -6,6 +6,8 @@ Optionally publish your results to the public leaderboard at **[apps.cleartextla
 
 The benchmark suite covers sequential throughput (incl. SEQ1M-QD8), random 4K IOPS at QD1/4/16/32/64, large-block random, mixed read/write, sustained sequential write, and QD1 latency — 23 tests total.
 
+For deeper analysis of thermal throttling and SLC cache behavior, the optional `--sustained` flag adds a 5-minute sustained-write test (1M QD4) that captures per-second bandwidth alongside per-3-second NVMe drive temperature via `smartctl`. The website renders the bandwidth + temperature traces as line charts on the run page.
+
 ## Quick start
 
 One line. Downloads the script and launches the interactive drive menu — no install, no clone.
@@ -52,9 +54,12 @@ brew install fio                     # macOS
 sudo apt-get install fio             # Debian/Ubuntu
 
 pip3 install matplotlib numpy        # optional; only used for dual-mode charts
+brew install smartmontools           # macOS-only; only needed for --sustained
 ```
 
-You also need at least ~5 GB free on each drive for the default test sizes.
+The script offers to install `fio`, `matplotlib`, and `smartmontools` for you (with a `[Y/n]` prompt) on first run if any are missing.
+
+You also need at least ~5 GB free on each drive for the default test sizes — closer to ~10 GB if you use `--sustained`, since the thermal test writes against an 8 GB scratch file.
 
 ## Dual mode (compare two drives)
 
@@ -120,6 +125,8 @@ Solo outputs are the same filenames but with a simpler structure:
 | `--size-multiplier N` | Scale test file sizes (e.g. `2.0` doubles, `0.5` halves). Larger files give more accurate sustained-write numbers but take longer. |
 | `--output PATH`, `-o PATH` | Where to write the HTML report. JSON is always written next to it with a `.json` extension. |
 | `--skip-charts` | Skip chart generation in dual mode. (Solo mode never generates charts.) |
+| `--only PATTERN` | Run only tests whose name contains `PATTERN` (case-insensitive). Disables upload since results are partial. Useful for re-running a single test, e.g. `--only QD64` or `--only "Write 5min"`. |
+| `--sustained` | Add the 5-minute sustained-write thermal test (1M QD4) to the suite. Captures per-second bandwidth and per-3-second drive temperature. Auto-installs `smartmontools` via brew if missing. **macOS only.** |
 
 ## What the tests measure
 
@@ -131,8 +138,21 @@ Solo outputs are the same filenames but with a simpler structure:
 | Mixed | 70/30 R/W at 4K QD16 and 64K QD16 | IOPS or MB/s |
 | Sustained | 30s sequential write at 1M QD4 | MB/s |
 | Latency | QD1 random read/write | p99 microseconds |
+| Thermal *(opt-in: `--sustained`)* | 5-minute sequential write at 1M QD4 with concurrent NVMe drive-temperature sampling. Useful for catching SLC cache exhaustion and thermal throttling. | MB/s + per-second bandwidth and per-3-second °C traces |
 
 All tests run with `--direct=1` where supported (falls back gracefully on filesystems that don't allow it) and `--end_fsync=1`. On macOS, queue depths > 1 use `posixaio` since the default `psync` engine ignores `iodepth`.
+
+### Thermal test details
+
+`--sustained` resolves the chosen mount point to its underlying `/dev/diskN` BSD device (via `diskutil info -plist`) and runs `smartctl -A` on that device every 3 seconds while fio writes. Both the bandwidth log (1-second averages from `--write_bw_log`) and the temperature samples are bundled into the JSON report and the upload payload. When uploaded, the website renders the two traces as line charts on the run page so you can spot the bimodal cycling pattern of SLC cache exhaustion (and distinguish it from thermal throttling, which shows a smooth tail-off).
+
+To run *just* the thermal test on two drives without the full suite:
+
+```bash
+python3 disk_duel.py /path/a /path/b --sustained --only "Write 5min"
+```
+
+`--only` automatically disables upload since partial-suite numbers can't be ranked on the leaderboard.
 
 ## Notes & gotchas
 
