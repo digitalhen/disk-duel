@@ -54,6 +54,13 @@ class TestResultIn(BaseModel):
     write_lat_us_p50: float | None = None
     write_lat_us_p99: float | None = None
     write_lat_us_p999: float | None = None
+    # Multi-run dispersion (script ≥ v0.3). primary_value is the median
+    # across `runs` trials; the rest describe the distribution.
+    runs: int | None = None
+    primary_value_samples: list[float] | None = None
+    primary_value_min: float | None = None
+    primary_value_max: float | None = None
+    primary_value_stdev: float | None = None
     # Per-second bandwidth + per-N-second temperature samples produced by
     # `--sustained` runs. dict-shaped to keep the schema flexible:
     #   {"bw_samples": [[t_s, mb_s], ...],
@@ -77,6 +84,7 @@ class RunIn(BaseModel):
     drives: list[DriveInfo] = Field(default_factory=list)
     quick: bool = False
     size_multiplier: float = 1.0
+    runs: int | None = None
     script_version: str | None = None
     all_results: list[TestResultIn]
     results: list[dict[str, Any]] = Field(default_factory=list)

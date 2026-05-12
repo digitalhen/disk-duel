@@ -27,6 +27,7 @@ import argparse
 import json
 import subprocess
 import os
+import statistics
 import sys
 import shutil
 import time
@@ -499,6 +500,9 @@ def run_fio_test(test: dict, directory: str, label: str) -> dict:
         f"--numjobs={test['numjobs']}",
         f"--size={test['size']}",
         f"--runtime={test['runtime']}",
+        # 2s warmup is excluded from the reported stats; absorbs the initial
+        # cache/queue settling so each trial's average reflects steady state.
+        "--ramp_time=2s",
         "--time_based",
         "--group_reporting",
         "--output-format=json",
@@ -637,6 +641,54 @@ def run_fio_test(test: dict, directory: str, label: str) -> dict:
     except json.JSONDecodeError as e:
         print(f"    {C.RED}JSON parse error: {e}{C.RESET}")
         return {"error": True}
+
+
+def run_fio_test_repeated(test: dict, directory: str, label: str, runs: int,
+                          on_trial=None) -> dict:
+    """Run `run_fio_test` N times and return a single aggregated result.
+
+    Every numeric field is replaced by its median across trials so the
+    return shape matches a single run -- downstream charts and scoring
+    code keep working unchanged. Adds dispersion fields:
+      runs                     -- N
+      primary_value_samples    -- list of per-trial primary_value
+      primary_value_min/max    -- across trials
+      primary_value_stdev      -- sample stdev (0.0 when N==1)
+
+    If any trial errors out, the aggregate is marked errored. on_trial,
+    if provided, is called as on_trial(idx, total, parsed_dict_or_err)
+    after each trial so the caller can print per-trial output."""
+
+    samples: list[dict] = []
+    for i in range(runs):
+        parsed = run_fio_test(test, directory, label)
+        if on_trial:
+            on_trial(i + 1, runs, parsed)
+        if parsed.get("error"):
+            return {"error": True}
+        samples.append(parsed)
+
+    # First trial provides non-numeric scaffolding (test_name, category,
+    # label, primary_unit). We rebuild numeric values as medians below.
+    agg: dict = dict(samples[0])
+    numeric_keys = {
+        k for k, v in samples[0].items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+    for k in numeric_keys:
+        values = [s[k] for s in samples if isinstance(s.get(k), (int, float))]
+        if values:
+            agg[k] = statistics.median(values)
+
+    primary_samples = [s["primary_value"] for s in samples]
+    agg["runs"] = runs
+    agg["primary_value_samples"] = primary_samples
+    agg["primary_value_min"] = min(primary_samples)
+    agg["primary_value_max"] = max(primary_samples)
+    agg["primary_value_stdev"] = (
+        statistics.stdev(primary_samples) if len(primary_samples) > 1 else 0.0
+    )
+    return agg
 
 
 def run_thermal_test(test: dict, directory: str, label: str,
@@ -1119,6 +1171,24 @@ def chart_scorecard(scored_results: list, labels: tuple) -> str:
 # ---------------------------------------------------------------------------
 # HTML report generation
 # ---------------------------------------------------------------------------
+def _dispersion_html(disp: dict | None, median: float, fmt) -> str:
+    """Build the small min–max (N=N) caption shown under a primary value
+    cell. Returns an empty string when no multi-run data is present."""
+    if not disp:
+        return ""
+    runs = disp.get("runs")
+    lo = disp.get("primary_value_min")
+    hi = disp.get("primary_value_max")
+    if not runs or runs < 2 or lo is None or hi is None:
+        return ""
+    pct = ((hi - lo) / median * 100.0) if median else 0.0
+    return (f'<div class="dispersion">'
+            f'{fmt(lo)}–{fmt(hi)} '
+            f'<span class="dispersion-pct">±{pct:.1f}%</span> '
+            f'<span class="dispersion-n">N={runs}</span>'
+            f'</div>')
+
+
 def generate_html_report(
     scored_results: list,
     labels: tuple,
@@ -1150,6 +1220,8 @@ def generate_html_report(
         val_b = s["b"]
         unit = r.get("primary_unit", "")
         is_lat = r.get("category") == "latency"
+        disp_a = r.get("dispersion_a") or {}
+        disp_b = r.get("dispersion_b") or {}
 
         if s["winner"] == "A":
             a_class = "winner"
@@ -1167,23 +1239,29 @@ def generate_html_report(
         if "IOPS" in unit:
             a_fmt = f"{val_a:,.0f}"
             b_fmt = f"{val_b:,.0f}"
+            disp_fmt = lambda v: f"{v:,.0f}"
         elif "MB/s" in unit:
             a_fmt = f"{val_a:,.1f}"
             b_fmt = f"{val_b:,.1f}"
+            disp_fmt = lambda v: f"{v:,.1f}"
         elif "us" in unit:
             a_fmt = f"{val_a:,.1f}"
             b_fmt = f"{val_b:,.1f}"
+            disp_fmt = lambda v: f"{v:,.1f}"
         else:
             a_fmt = f"{val_a:,.2f}"
             b_fmt = f"{val_b:,.2f}"
+            disp_fmt = lambda v: f"{v:,.2f}"
 
         note = " (lower is better)" if is_lat else ""
+        disp_html_a = _dispersion_html(disp_a, val_a, disp_fmt)
+        disp_html_b = _dispersion_html(disp_b, val_b, disp_fmt)
 
         rows_html += f"""
         <tr>
             <td class="test-name">{r['test_name']}</td>
-            <td class="{a_class}">{a_fmt} <span class="unit">{unit}</span></td>
-            <td class="{b_class}">{b_fmt} <span class="unit">{unit}</span></td>
+            <td class="{a_class}">{a_fmt} <span class="unit">{unit}</span>{disp_html_a}</td>
+            <td class="{b_class}">{b_fmt} <span class="unit">{unit}</span>{disp_html_b}</td>
             <td>{badge}{note}</td>
         </tr>"""
 
@@ -1269,6 +1347,15 @@ def generate_html_report(
     .winner {{ color: #3fb950; font-weight: 700; }}
     .loser {{ color: #8b949e; }}
     .unit {{ color: #484f58; font-size: 0.85em; }}
+    .dispersion {{
+        color: #6e7681;
+        font-size: 0.75em;
+        font-weight: 400;
+        margin-top: 2px;
+        font-variant-numeric: tabular-nums;
+    }}
+    .dispersion-pct {{ color: #8b949e; }}
+    .dispersion-n {{ color: #484f58; margin-left: 4px; }}
     .badge {{
         display: inline-block;
         padding: 3px 10px;
@@ -1349,17 +1436,28 @@ def generate_html_report(
 # ---------------------------------------------------------------------------
 # Console summary
 # ---------------------------------------------------------------------------
+def _dispersion_pct(disp: dict | None, median: float) -> float | None:
+    """Compute (max-min)/median*100 from a dispersion dict, or None if absent."""
+    if not disp or not median:
+        return None
+    lo = disp.get("primary_value_min")
+    hi = disp.get("primary_value_max")
+    if lo is None or hi is None:
+        return None
+    return (hi - lo) / median * 100.0
+
+
 def print_summary(scored_results: list, labels: tuple):
     """Print a formatted summary table to the console."""
 
-    print(f"\n{C.BOLD}{'='*80}{C.RESET}")
+    print(f"\n{C.BOLD}{'='*86}{C.RESET}")
     print(f"{C.BOLD}{C.CYAN}  RESULTS SUMMARY{C.RESET}")
-    print(f"{C.BOLD}{'='*80}{C.RESET}\n")
+    print(f"{C.BOLD}{'='*86}{C.RESET}\n")
 
     # Header
-    col1 = 32
-    col2 = 16
-    col3 = 16
+    col1 = 30
+    col2 = 18
+    col3 = 18
     col4 = 20
     header = (
         f"  {'Test':<{col1}}"
@@ -1378,6 +1476,8 @@ def print_summary(scored_results: list, labels: tuple):
     for r in scored_results:
         s = r["score"]
         unit = r.get("primary_unit", "")
+        disp_a = r.get("dispersion_a") or {}
+        disp_b = r.get("dispersion_b") or {}
 
         if "IOPS" in unit:
             a_raw = f"{s['a']:,.0f}"
@@ -1385,6 +1485,14 @@ def print_summary(scored_results: list, labels: tuple):
         else:
             a_raw = f"{s['a']:,.1f}"
             b_raw = f"{s['b']:,.1f}"
+
+        # Append ±range% from the dispersion data when present.
+        pct_a = _dispersion_pct(disp_a, s["a"])
+        pct_b = _dispersion_pct(disp_b, s["b"])
+        if pct_a is not None:
+            a_raw = f"{a_raw} ±{pct_a:.1f}%"
+        if pct_b is not None:
+            b_raw = f"{b_raw} ±{pct_b:.1f}%"
 
         # Pad to column width FIRST, then apply color so ANSI escapes don't
         # confuse the format width calculation.
@@ -1415,14 +1523,14 @@ def print_summary(scored_results: list, labels: tuple):
     b_wins = sum(1 for r in scored_results if r["score"]["winner"] == "B")
     ties = sum(1 for r in scored_results if r["score"]["winner"] == "tie")
 
-    print(f"\n{C.BOLD}{'='*80}{C.RESET}")
+    print(f"\n{C.BOLD}{'='*86}{C.RESET}")
     if a_wins > b_wins:
         print(f"  {C.BOLD}{C.GREEN}OVERALL WINNER: {labels[0]}{C.RESET}  ({a_wins}-{b_wins}-{ties})")
     elif b_wins > a_wins:
         print(f"  {C.BOLD}{C.GREEN}OVERALL WINNER: {labels[1]}{C.RESET}  ({b_wins}-{a_wins}-{ties})")
     else:
         print(f"  {C.BOLD}{C.YELLOW}OVERALL: TIE{C.RESET}  ({a_wins}-{b_wins}-{ties})")
-    print(f"{C.BOLD}{'='*80}{C.RESET}\n")
+    print(f"{C.BOLD}{'='*86}{C.RESET}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -1807,12 +1915,12 @@ def pick_drives_interactive(drives: list) -> tuple:
 # ---------------------------------------------------------------------------
 def print_summary_solo(results: list, label: str):
     """Print a formatted summary for a single-drive benchmark."""
-    print(f"\n{C.BOLD}{'='*70}{C.RESET}")
+    print(f"\n{C.BOLD}{'='*76}{C.RESET}")
     print(f"{C.BOLD}{C.CYAN}  RESULTS SUMMARY -- {label}{C.RESET}")
-    print(f"{C.BOLD}{'='*70}{C.RESET}\n")
+    print(f"{C.BOLD}{'='*76}{C.RESET}\n")
 
-    col1 = 36
-    col2 = 18
+    col1 = 34
+    col2 = 22
     col3 = 14
     header = f"  {'Test':<{col1}}{'Result':>{col2}}  {'Unit':<{col3}}"
     print(f"{C.BOLD}{header}{C.RESET}")
@@ -1825,11 +1933,14 @@ def print_summary_solo(results: list, label: str):
             v_str = f"{val:,.0f}"
         else:
             v_str = f"{val:,.1f}"
+        pct = _dispersion_pct(r, val)
+        if pct is not None:
+            v_str = f"{v_str} ±{pct:.1f}%"
         v_padded = f"{v_str:>{col2}}"
         name_short = r["test_name"][:col1-2]
         print(f"  {name_short:<{col1}}{C.GREEN}{v_padded}{C.RESET}  {C.DIM}{unit:<{col3}}{C.RESET}")
 
-    print(f"\n{C.BOLD}{'='*70}{C.RESET}\n")
+    print(f"\n{C.BOLD}{'='*76}{C.RESET}\n")
 
 
 def generate_html_report_solo(
@@ -1845,13 +1956,19 @@ def generate_html_report_solo(
         val = r.get("primary_value", 0)
         if "IOPS" in unit:
             v_fmt = f"{val:,.0f}"
+            fmt = lambda v: f"{v:,.0f}"
         else:
             v_fmt = f"{val:,.1f}"
+            fmt = lambda v: f"{v:,.1f}"
+
+        # In solo mode dispersion fields ride alongside primary_value on the
+        # result dict itself, not under a "dispersion_*" key.
+        disp_html = _dispersion_html(r, val, fmt)
 
         rows_html += f"""
         <tr>
             <td class="test-name">{r['test_name']}</td>
-            <td class="value">{v_fmt} <span class="unit">{unit}</span></td>
+            <td class="value">{v_fmt} <span class="unit">{unit}</span>{disp_html}</td>
             <td class="category">{r.get('category', '')}</td>
         </tr>"""
 
@@ -1908,6 +2025,15 @@ def generate_html_report_solo(
     .value {{ color: #3fb950; font-weight: 700; }}
     .unit {{ color: #484f58; font-size: 0.85em; font-weight: 400; }}
     .category {{ color: #8b949e; font-size: 0.85em; text-transform: capitalize; }}
+    .dispersion {{
+        color: #6e7681;
+        font-size: 0.75em;
+        font-weight: 400;
+        margin-top: 2px;
+        font-variant-numeric: tabular-nums;
+    }}
+    .dispersion-pct {{ color: #8b949e; }}
+    .dispersion-n {{ color: #484f58; margin-left: 4px; }}
     .meta {{
         margin-top: 40px;
         padding-top: 20px;
@@ -1953,7 +2079,7 @@ def generate_html_report_solo(
 # ---------------------------------------------------------------------------
 # Upload to public leaderboard
 # ---------------------------------------------------------------------------
-SCRIPT_VERSION = "0.2.0"
+SCRIPT_VERSION = "0.3.0"
 DEFAULT_UPLOAD_URL = "https://apps.cleartextlabs.com/disk-duel/api/v1/runs/"
 
 # Proof-of-work parameters. The server verifies that
@@ -2147,6 +2273,13 @@ def main():
         help="Run shorter tests for quick validation"
     )
     parser.add_argument(
+        "--runs", type=int, default=5, metavar="N",
+        help="Number of trials per test. Headline value is the median; "
+             "min/max/stdev are recorded. Default 5. Each extra run roughly "
+             "multiplies suite runtime, so --runs 1 reproduces the old "
+             "single-shot behavior."
+    )
+    parser.add_argument(
         "--size-multiplier", type=float, default=1.0,
         help="Scale test file sizes (2.0 = double, 0.5 = half)"
     )
@@ -2171,6 +2304,8 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.runs < 1:
+        parser.error("--runs must be >= 1")
 
     banner()
 
@@ -2290,6 +2425,9 @@ def main():
           f"({total_tests * drive_count} total tests)...{C.RESET}")
     if args.quick:
         print(f"  {C.YELLOW}(quick mode -- shorter runtimes){C.RESET}")
+    if args.runs > 1:
+        print(f"  {C.DIM}{args.runs} trials per test; "
+              f"headline value is the median{C.RESET}")
     print()
 
     # Run benchmarks
@@ -2297,11 +2435,77 @@ def main():
     scored_results = []  # only populated in dual mode
     solo_results = []    # only populated in solo mode
 
-    def _run_test(test, directory, label, device):
-        """Dispatch a single test to the right runner."""
-        if test.get("thermal"):
-            return run_thermal_test(test, directory, label, device)
-        return run_fio_test(test, directory, label)
+    def _fmt_trial(val: float, unit: str) -> str:
+        if "IOPS" in unit:
+            if val >= 10_000:
+                return f"{val/1000:.0f}k"
+            return f"{val:.0f}"
+        return f"{val:,.1f}"
+
+    def _run_one_drive(test, directory, label, color, device):
+        """Run a test on one drive with prefix print, per-trial inline output
+        when --runs > 1, and a final summary line. Returns (result, elapsed)."""
+        print(f"  {color}{label}{C.RESET}...", end=" ", flush=True)
+        t0 = time.time()
+        is_thermal = bool(test.get("thermal"))
+
+        if is_thermal:
+            result = run_thermal_test(test, directory, label, device)
+        elif args.runs > 1:
+            state = {"first": True}
+
+            def on_trial(idx, total, parsed):
+                if parsed.get("error"):
+                    return
+                v = _fmt_trial(parsed["primary_value"], test["unit"])
+                if state["first"]:
+                    print(f"[{v}", end="", flush=True)
+                    state["first"] = False
+                else:
+                    print(f" · {v}", end="", flush=True)
+                if idx == total:
+                    print("] ", end="", flush=True)
+            result = run_fio_test_repeated(
+                test, directory, label, args.runs, on_trial=on_trial
+            )
+        else:
+            result = run_fio_test(test, directory, label)
+
+        elapsed = time.time() - t0
+        if result.get("error"):
+            print(f"{C.RED}FAILED{C.RESET}")
+            return result, elapsed
+
+        val = result["primary_value"]
+        unit = test["unit"]
+        val_str = f"{val:,.0f}" if "IOPS" in unit else f"{val:,.1f}"
+        if args.runs > 1 and not is_thermal:
+            lo = result.get("primary_value_min", val)
+            hi = result.get("primary_value_max", val)
+            rng_pct = ((hi - lo) / val * 100.0) if val else 0.0
+            print(f"→ {C.GREEN}{val_str} {unit}{C.RESET} "
+                  f"{C.DIM}±{rng_pct:.1f}%{C.RESET} "
+                  f"({elapsed:.1f}s)")
+        else:
+            print(f"{C.GREEN}{val_str} {unit}{C.RESET} ({elapsed:.1f}s)")
+
+        if is_thermal:
+            ts = result.get("time_series") or {}
+            temps = [t for _, t in (ts.get("temp_samples") or []) if t is not None]
+            if temps:
+                print(f"  {C.DIM}temp: start={temps[0]}°C peak={max(temps)}°C "
+                      f"end={temps[-1]}°C{C.RESET}")
+        return result, elapsed
+
+    def _dispersion_payload(result: dict) -> dict:
+        """Pluck the multi-run dispersion fields off a result dict, if any."""
+        out = {}
+        for k in ("runs", "primary_value_samples",
+                  "primary_value_min", "primary_value_max",
+                  "primary_value_stdev"):
+            if k in result:
+                out[k] = result[k]
+        return out
 
     for i, test in enumerate(tests):
         test_num = i + 1
@@ -2311,51 +2515,33 @@ def main():
                   f"This will take a while.{C.RESET}")
 
         # Drive A
-        print(f"  {C.BLUE}{labels[0]}{C.RESET}...", end=" ", flush=True)
-        t0 = time.time()
-        result_a = _run_test(test, path_a, labels[0], device_a)
-        elapsed_a = time.time() - t0
-
+        result_a, elapsed_a = _run_one_drive(
+            test, path_a, labels[0], C.BLUE, device_a
+        )
         if result_a.get("error"):
-            print(f"{C.RED}FAILED{C.RESET}")
             continue
         val_a = result_a["primary_value"]
-        print(f"{C.GREEN}{val_a:,.1f} {test['unit']}{C.RESET} ({elapsed_a:.1f}s)")
-        if test.get("thermal"):
-            ts = result_a.get("time_series") or {}
-            temps = [t for _, t in (ts.get("temp_samples") or []) if t is not None]
-            if temps:
-                print(f"  {C.DIM}temp: start={temps[0]}°C peak={max(temps)}°C "
-                      f"end={temps[-1]}°C{C.RESET}")
 
         if solo:
             all_results.append(result_a)
-            solo_results.append({
+            solo_entry = {
                 "test_name": test["name"],
                 "category": test["category"],
                 "primary_unit": test["unit"],
                 "primary_value": val_a,
-            })
+            }
+            solo_entry.update(_dispersion_payload(result_a))
+            solo_results.append(solo_entry)
             print()
             continue
 
         # Drive B
-        print(f"  {C.RED}{labels[1]}{C.RESET}...", end=" ", flush=True)
-        t0 = time.time()
-        result_b = _run_test(test, path_b, labels[1], device_b)
-        elapsed_b = time.time() - t0
-
+        result_b, elapsed_b = _run_one_drive(
+            test, path_b, labels[1], C.RED, device_b
+        )
         if result_b.get("error"):
-            print(f"{C.RED}FAILED{C.RESET}")
             continue
         val_b = result_b["primary_value"]
-        print(f"{C.GREEN}{val_b:,.1f} {test['unit']}{C.RESET} ({elapsed_b:.1f}s)")
-        if test.get("thermal"):
-            ts = result_b.get("time_series") or {}
-            temps = [t for _, t in (ts.get("temp_samples") or []) if t is not None]
-            if temps:
-                print(f"  {C.DIM}temp: start={temps[0]}°C peak={max(temps)}°C "
-                      f"end={temps[-1]}°C{C.RESET}")
 
         # Score
         is_latency = test["category"] == "latency"
@@ -2378,6 +2564,8 @@ def main():
             "category": test["category"],
             "primary_unit": test["unit"],
             "score": score,
+            "dispersion_a": _dispersion_payload(result_a),
+            "dispersion_b": _dispersion_payload(result_b),
         }
         scored_results.append(scored_entry)
 
@@ -2441,6 +2629,7 @@ def main():
             "drives": payload_drives,
             "quick": args.quick,
             "size_multiplier": args.size_multiplier,
+            "runs": args.runs,
             "script_version": SCRIPT_VERSION,
             "results": solo_results,
             "all_results": all_results,
@@ -2455,6 +2644,7 @@ def main():
             "drives": payload_drives,
             "quick": args.quick,
             "size_multiplier": args.size_multiplier,
+            "runs": args.runs,
             "script_version": SCRIPT_VERSION,
             "results": scored_results,
             "all_results": [
