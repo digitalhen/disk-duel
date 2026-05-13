@@ -13,7 +13,7 @@ For deeper analysis of thermal throttling and SLC cache behavior, the optional `
 One line. Downloads the script and launches the interactive drive menu — no install, no clone.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py
+curl -fsSL https://diskduel.com/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py
 ```
 
 The HTML/JSON report lands in your current directory. Make sure `fio` is installed (`brew install fio` on macOS, `sudo apt-get install fio` on Debian/Ubuntu) — the script tells you if it's missing.

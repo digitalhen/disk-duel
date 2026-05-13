@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, distinct, func, or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -16,6 +16,16 @@ from app.slugs import drive_id_from_slug
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
+
+
+@router.get("/disk_duel.py", include_in_schema=False)
+def script_redirect() -> RedirectResponse:
+    """Stable short URL for the install one-liner. Redirects to GitHub raw
+    on main so the script is whatever's at HEAD; curl -L follows it."""
+    return RedirectResponse(
+        url="https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py",
+        status_code=302,
+    )
 
 
 # Tests featured on the leaderboard, with the direction that makes
