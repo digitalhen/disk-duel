@@ -1,5 +1,19 @@
 {% extends "base.html" %}
-{% block title %}{{ machine.machine_model or machine.machine_name }} · Disk Duel{% endblock %}
+{% set _machine_label = machine.machine_model or machine.machine_name or 'Machine' %}
+{% block title %}{{ _machine_label }}{% if machine.chip_type %} ({{ machine.chip_type }}){% endif %} · Disk Duel benchmarks{% endblock %}
+{% block description %}fio drive benchmarks on {{ _machine_label }}{% if machine.chip_type %} with {{ machine.chip_type }}{% endif %}. {{ machine.drives | length }} drive{{ '' if machine.drives | length == 1 else 's' }}, {{ runs | length }} run{{ '' if runs | length == 1 else 's' }} — sequential, random 4K IOPS, and QD1 latency results.{% endblock %}
+{% block og_type %}profile{% endblock %}
+{% block jsonld %}
+<script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "Thing",
+    "name": "{{ _machine_label }}{% if machine.chip_type %} ({{ machine.chip_type }}){% endif %}",
+    "url": "{{ canonical_url }}",
+    "description": "Disk Duel drive benchmarks for {{ _machine_label }}."
+}
+</script>
+{% endblock %}
 {% block content %}
 <section>
     <h1>{{ machine.machine_model or machine.machine_name or 'Machine' }}</h1>

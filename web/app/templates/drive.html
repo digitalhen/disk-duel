@@ -1,5 +1,24 @@
 {% extends "base.html" %}
-{% block title %}{{ drive.media_name }} · Disk Duel{% endblock %}
+{% block title %}{{ drive.media_name }} benchmarks · Disk Duel{% endblock %}
+{% block description %}Real-world fio benchmarks for {{ drive.media_name }}{% if drive.bus_protocol %} on {{ drive.bus_protocol }}{% endif %}{% if drive.enclosure_name %} in a {{ drive.enclosure_name }} enclosure{% endif %} — sequential throughput, random 4K IOPS, and QD1 latency results from {{ runs | length }} run{{ '' if runs | length == 1 else 's' }}.{% endblock %}
+{% block og_type %}product{% endblock %}
+{% block jsonld %}
+<script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "{{ drive.media_name }}",
+    "url": "{{ canonical_url }}",
+    "category": "Computer Storage",
+    {% if drive.bus_protocol %}"additionalProperty": [
+        {"@type": "PropertyValue", "name": "Bus", "value": "{{ drive.bus_protocol }}"}
+        {%- if drive.size_gb %}, {"@type": "PropertyValue", "name": "Capacity", "value": "{{ '%.0f' | format(drive.size_gb) }} GB"}{%- endif %}
+        {%- if drive.enclosure_name %}, {"@type": "PropertyValue", "name": "Enclosure", "value": "{{ drive.enclosure_name }}"}{%- endif %}
+    ],{% endif %}
+    "description": "Disk Duel benchmark results for {{ drive.media_name }}."
+}
+</script>
+{% endblock %}
 {% block content %}
 <section>
     <h1>{{ drive.media_name }}</h1>

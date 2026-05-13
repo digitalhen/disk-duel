@@ -24,6 +24,9 @@ def _static_version() -> str:
 
 STATIC_VERSION = _static_version()
 pages.templates.env.globals["static_version"] = STATIC_VERSION
+# Absolute base for canonical / og:url tags. Strips trailing slash so the
+# templates can do `canonical_base + request.url.path` cleanly.
+pages.templates.env.globals["canonical_base"] = settings.public_base_url.rstrip("/")
 
 
 app = FastAPI(

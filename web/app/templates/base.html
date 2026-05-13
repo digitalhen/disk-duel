@@ -3,9 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% block title %}Disk Duel{% endblock %}</title>
+
+{% set _site_name = "Disk Duel" %}
+{% set _default_description = "Crowdsourced fio drive benchmarks from real machines. Compare NVMe SSDs, internal vs external enclosures, and run the same 23-test suite on yours." %}
+{% set canonical_url = canonical_base + request.url.path %}
+
+<title>{% block title %}{{ _site_name }} — Crowdsourced drive benchmarks{% endblock %}</title>
+<meta name="description" content="{% block description %}{{ _default_description }}{% endblock %}">
+<link rel="canonical" href="{{ canonical_url }}">
+<meta name="robots" content="{% block robots %}index, follow{% endblock %}">
+<meta name="theme-color" content="#0f172a">
+
+<meta property="og:site_name" content="{{ _site_name }}">
+<meta property="og:type" content="{% block og_type %}website{% endblock %}">
+<meta property="og:title" content="{% block og_title %}{{ self.title() }}{% endblock %}">
+<meta property="og:description" content="{% block og_description %}{{ self.description() }}{% endblock %}">
+<meta property="og:url" content="{{ canonical_url }}">
+
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{ self.og_title() }}">
+<meta name="twitter:description" content="{{ self.og_description() }}">
+
 <link rel="stylesheet" href="{{ request.url_for('static', path='styles.css') }}?v={{ static_version }}">
 {% block head %}{% endblock %}
+{% block jsonld %}{% endblock %}
 </head>
 <body>
 <header>

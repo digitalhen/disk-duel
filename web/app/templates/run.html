@@ -1,5 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Run · Disk Duel{% endblock %}
+{% set _machine_label = run.machine.machine_model or run.machine.machine_name or 'unknown machine' %}
+{% set _run_title = run.drive_a.media_name ~ (' vs ' ~ run.drive_b.media_name if run.drive_b else ' benchmark') %}
+{% block title %}{{ _run_title }} · {{ _machine_label }} · Disk Duel{% endblock %}
+{% block description %}{% if run.drive_b %}Head-to-head fio benchmark of {{ run.drive_a.media_name }} vs {{ run.drive_b.media_name }}{% else %}fio benchmark of {{ run.drive_a.media_name }}{% endif %} on {{ _machine_label }}{% if run.machine.chip_type %} ({{ run.machine.chip_type }}){% endif %} — sequential, random 4K IOPS, and QD1 latency results from {{ run.ts.strftime('%Y-%m-%d') }}.{% endblock %}
+{% block og_type %}article{% endblock %}
+{% block jsonld %}
+<script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "Dataset",
+    "name": "{{ _run_title }}",
+    "description": "{% if run.drive_b %}Head-to-head{% else %}Single-drive{% endif %} fio benchmark on {{ _machine_label }}.",
+    "url": "{{ canonical_url }}",
+    "datePublished": "{{ run.ts.strftime('%Y-%m-%dT%H:%M:%SZ') }}",
+    "creator": {"@type": "Organization", "name": "Disk Duel"},
+    "keywords": ["fio", "SSD benchmark", "NVMe", "IOPS", "{{ run.drive_a.media_name }}"{% if run.drive_b %}, "{{ run.drive_b.media_name }}"{% endif %}],
+    "variableMeasured": ["Sequential read MB/s", "Sequential write MB/s", "Random 4K read IOPS", "Random 4K write IOPS", "QD1 read latency", "QD1 write latency"],
+    "license": "https://opensource.org/licenses/MIT"
+}
+</script>
+{% endblock %}
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 {% endblock %}

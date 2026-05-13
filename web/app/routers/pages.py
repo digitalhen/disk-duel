@@ -4,11 +4,12 @@ from pathlib import Path
 from typing import Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import desc, distinct, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.config import settings
 from app.db import get_db
 from app.models import Drive, Machine, Run, TestResult
 from app.slugs import drive_id_from_slug
@@ -26,6 +27,55 @@ def script_redirect() -> RedirectResponse:
         url="https://raw.githubusercontent.com/digitalhen/disk-duel/main/disk_duel.py",
         status_code=302,
     )
+
+
+@router.get("/robots.txt", include_in_schema=False)
+def robots_txt() -> PlainTextResponse:
+    base = settings.public_base_url.rstrip("/")
+    body = f"User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: {base}/sitemap.xml\n"
+    return PlainTextResponse(body)
+
+
+# Cap on run URLs in the sitemap. Sitemap protocol limits to 50k entries;
+# 500 keeps the doc small and prioritizes recent content. Older runs stay
+# crawlable via links from the home page and machine/drive pages.
+SITEMAP_RUN_LIMIT = 500
+
+
+@router.get("/sitemap.xml", include_in_schema=False)
+def sitemap_xml(db: Session = Depends(get_db)) -> Response:
+    base = settings.public_base_url.rstrip("/")
+    rows: list[tuple[str, str | None]] = [
+        (f"{base}/", None),
+        (f"{base}/about/", None),
+    ]
+    for m in db.scalars(select(Machine).order_by(Machine.last_seen.desc())):
+        rows.append((
+            f"{base}/machine/{m.slug}/",
+            m.last_seen.strftime("%Y-%m-%d") if m.last_seen else None,
+        ))
+    for d in db.scalars(
+        select(Drive)
+        .options(selectinload(Drive.machine))
+        .order_by(Drive.id.desc())
+    ):
+        lastmod = d.machine.last_seen.strftime("%Y-%m-%d") if d.machine and d.machine.last_seen else None
+        rows.append((f"{base}/drive/{d.slug}/", lastmod))
+    for r in db.scalars(
+        select(Run).order_by(Run.ts.desc()).limit(SITEMAP_RUN_LIMIT)
+    ):
+        rows.append((f"{base}/run/{r.slug}/", r.ts.strftime("%Y-%m-%d")))
+
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for loc, lastmod in rows:
+        parts.append("<url>")
+        parts.append(f"<loc>{loc}</loc>")
+        if lastmod:
+            parts.append(f"<lastmod>{lastmod}</lastmod>")
+        parts.append("</url>")
+    parts.append("</urlset>")
+    return Response(content="\n".join(parts), media_type="application/xml")
 
 
 # Tests featured on the leaderboard, with the direction that makes

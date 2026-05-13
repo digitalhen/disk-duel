@@ -1,4 +1,18 @@
 {% extends "base.html" %}
+{% block title %}Disk Duel — Crowdsourced NVMe & SSD benchmarks{% endblock %}
+{% block description %}Public leaderboard of fio drive benchmarks. {{ counts.drives }} unique drives across {{ counts.machines }} machines, {{ counts.runs }} runs. Compare SEQ1M, RND4K IOPS, and QD1 latency on real hardware.{% endblock %}
+{% block jsonld %}
+<script type="application/ld+json">
+{
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Disk Duel",
+    "url": "{{ canonical_base }}/",
+    "description": "Crowdsourced fio drive benchmarks from real machines.",
+    "publisher": {"@type": "Organization", "name": "Disk Duel"}
+}
+</script>
+{% endblock %}
 {% block content %}
 {% set install_cmd = 'curl -fsSL https://diskduel.com/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py --upload' %}
 <section class="hero">

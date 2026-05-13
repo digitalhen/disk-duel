@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}How it works · Disk Duel{% endblock %}
+{% block description %}How the Disk Duel benchmark works: 23-test fio suite, interactive drive picker, proof-of-work submission, and hashed-serial privacy. One-line install on macOS or Linux.{% endblock %}
 {% block content %}
 {% set fio_brew = 'brew install fio' %}
 {% set run_upload = 'curl -fsSL https://diskduel.com/disk_duel.py -o /tmp/disk_duel.py && python3 /tmp/disk_duel.py --upload' %}
