@@ -2080,7 +2080,7 @@ def generate_html_report_solo(
 # Upload to public leaderboard
 # ---------------------------------------------------------------------------
 SCRIPT_VERSION = "0.3.0"
-DEFAULT_UPLOAD_URL = "https://apps.cleartextlabs.com/disk-duel/api/v1/runs/"
+DEFAULT_UPLOAD_URL = "https://diskduel.com/api/v1/runs/"
 
 # Proof-of-work parameters. The server verifies that
 #   sha256(f"disk-duel:v1:{serial}:{timestamp}:{nonce}") has at least
@@ -2262,7 +2262,7 @@ def main():
     upload_group = parser.add_mutually_exclusive_group()
     upload_group.add_argument(
         "--upload", action="store_true",
-        help="Submit the result to the public leaderboard at apps.cleartextlabs.com/disk-duel."
+        help="Submit the result to the public leaderboard at diskduel.com."
     )
     upload_group.add_argument(
         "--no-upload", action="store_true",

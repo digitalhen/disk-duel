@@ -2,7 +2,7 @@
 
 Comprehensive `fio`-based drive benchmark with a scored HTML report. Compare two drives head-to-head, or benchmark a single drive on its own. Includes an interactive drive picker with auto-detection of host hardware and mounted drives on macOS.
 
-Optionally publish your results to the public leaderboard at **[apps.cleartextlabs.com/disk-duel](https://apps.cleartextlabs.com/disk-duel/)** with `--upload`. Serials are hashed before storage and never displayed.
+Optionally publish your results to the public leaderboard at **[diskduel.com](https://diskduel.com/)** with `--upload`. Serials are hashed before storage and never displayed.
 
 The benchmark suite covers sequential throughput (incl. SEQ1M-QD8), random 4K IOPS at QD1/4/16/32/64, large-block random, mixed read/write, sustained sequential write, and QD1 latency — 23 tests total.
 
@@ -24,7 +24,7 @@ If you'd rather skip the menu and pass paths directly, append them — `python3 
 
 ## Publishing to the leaderboard
 
-The site at [apps.cleartextlabs.com/disk-duel](https://apps.cleartextlabs.com/disk-duel/) collects runs from anyone running the script. To submit yours:
+The site at [diskduel.com](https://diskduel.com/) collects runs from anyone running the script. To submit yours:
 
 ```bash
 python3 /tmp/disk_duel.py --upload

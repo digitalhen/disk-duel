@@ -76,7 +76,7 @@ The script does a proof-of-work hash before posting (`POW_DIFFICULTY_BITS = 20` 
 `disk_duel.py --sustained` runs a 5-minute thermal test alongside the regular suite, and uploads the time-series with the rest of the payload. To backfill the thermal test onto an existing run instead, the admin endpoint accepts a smaller payload:
 
 ```bash
-curl -X POST "https://apps.cleartextlabs.com/disk-duel/api/v1/admin/runs/<slug>/attach-thermal" \
+curl -X POST "https://diskduel.com/api/v1/admin/runs/<slug>/attach-thermal" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $DISK_DUEL_API_KEY" \
   -H "User-Agent: Mozilla/5.0" \
@@ -95,8 +95,23 @@ Built for Dokploy on studiomac (matches existing infra patterns):
 
 1. New service from this repo, build context = `web/`.
 2. Set the env vars from `.env.example` in Dokploy's UI (do **not** commit a real `.env`).
-3. Reverse-proxy `apps.cleartextlabs.com/disk-duel/*` to the container's port 8000. The app is `root_path` aware, so set `ROOT_PATH=/disk-duel`.
+3. Point `diskduel.com` at the container on port 8000 in Dokploy. The app serves from the root, so leave `ROOT_PATH` unset and set `PUBLIC_BASE_URL=https://diskduel.com`. (`root_path` support is still wired in if you ever need to mount under a subpath again.)
 4. Migrations run automatically on container start (`alembic upgrade head` is in the `CMD`).
+
+### Old-URL redirect (Traefik)
+
+The previous home was `apps.cleartextlabs.com/disk-duel/*`. To 301-redirect those URLs to `diskduel.com/*` (preserving the path so existing run/machine links keep working), add a Traefik `redirectregex` middleware to the router that still owns the old hostname. In Dokploy this is configured as labels on the service (or as a domain-level middleware in the UI):
+
+```yaml
+labels:
+  - "traefik.http.middlewares.diskduel-legacy.redirectregex.regex=^https?://apps\\.cleartextlabs\\.com/disk-duel(/.*)?$$"
+  - "traefik.http.middlewares.diskduel-legacy.redirectregex.replacement=https://diskduel.com$${1}"
+  - "traefik.http.middlewares.diskduel-legacy.redirectregex.permanent=true"
+  # then attach `diskduel-legacy@docker` to whichever router currently
+  # answers for Host(`apps.cleartextlabs.com`) && PathPrefix(`/disk-duel`).
+```
+
+A bare `apps.cleartextlabs.com/disk-duel` (no trailing slash) lands on `https://diskduel.com` — the `(/.*)?` group makes the path optional, and the empty capture replaces cleanly. The `$$` and `$${1}` escapes are for docker-compose; if you're pasting straight into a Traefik dynamic-config YAML, use single `$` and `${1}`.
 
 ## Schema
 
